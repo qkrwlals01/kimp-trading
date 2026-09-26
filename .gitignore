@@ -17,3 +17,11 @@ __pycache__/
 
 # 결과물
 *.png
+
+# 로컬 환경
+.venv/
+.DS_Store
+.claude/
+
+# 외부 블로그 수집물 (타인 콘텐츠 — 저장소에 올리지 않음)
+tools/blog_data/

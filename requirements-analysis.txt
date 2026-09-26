@@ -1,0 +1,8 @@
+# 분석·시뮬레이션 도구 전용 (서버 봇 실행에는 불필요)
+-r requirements.txt
+pandas
+scipy
+statsmodels
+yfinance
+beautifulsoup4
+lxml
