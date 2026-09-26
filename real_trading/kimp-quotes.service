@@ -1,0 +1,33 @@
+# 호가 로거 상시 실행 (Oracle Cloud 서버용)
+#
+# 설치:
+#   sudo cp ~/kimp_trading/real_trading/kimp-quotes.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now kimp-quotes
+#
+# 확인:
+#   sudo systemctl status kimp-quotes
+#   sudo journalctl -u kimp-quotes -f
+#   ~/kimp_venv/bin/python -m real_trading.quote_logger --status
+#
+# 모의매매 서비스(kimp.service)와 독립적으로 돈다. 주문을 내지 않고 공개 호가만 읽는다.
+
+[Unit]
+Description=Kimp quote logger (executable bid/ask kimp recorder)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<USER>
+WorkingDirectory=/home/<USER>/kimp_trading
+ExecStart=/home/<USER>/kimp_venv/bin/python -m real_trading.quote_logger
+Restart=always
+RestartSec=10
+# 종료 신호를 받으면 현재 주기를 마치고 끝낸다
+KillSignal=SIGTERM
+TimeoutStopSec=20
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
