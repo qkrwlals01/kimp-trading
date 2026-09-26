@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from flask import Flask, render_template_string
 
 LOG_DIR   = os.path.join(os.path.dirname(__file__), "logs")
-TRADE_LOG = os.path.join(LOG_DIR, "trades.csv")
+TRADE_LOG = os.path.join(LOG_DIR, "trades_book.csv")   # 호가 기준 기록 (trades.csv 는 체결가 기준 옛 기록)
 
 app = Flask(__name__)
 
