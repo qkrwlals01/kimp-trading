@@ -211,7 +211,15 @@ def evaluate(data: dict, args) -> list:
             notes.append(f"24h 괴리 {d24:.2f}%p")
         if m["rise_24h_max"] > args.rise_max:
             reasons.append(f"급등 {m['rise_24h_max']:.1f}%")
-        if m["net_per_day"] <= 0:
+        # 거래가 0회인 것과 기대수익이 음수인 것은 다르다. 전자를 후자로 표시하면
+        # 데이터가 모자랄 뿐인 코인을 나쁜 코인으로 오해하게 된다.
+        need_h = args.window * 0.25 + 1                  # 첫 진입 판단이 가능해지는 시간
+        span_h = span / 3600
+        if span_h < need_h:
+            reasons.append(f"판단 보류: 데이터 {span_h:.1f}h (최소 {need_h:.0f}h)")
+        elif not tr:
+            reasons.append("거래 없음 (진입 조건 미충족)")
+        elif m["net_per_day"] <= 0:
             reasons.append("기대수익≤0")
         if m["funding_pos_share"] < 0.5:
             notes.append("펀딩 음수 잦음")
@@ -246,7 +254,12 @@ def report(res: list, args, files: list, span_h: float):
               f"{m['net_per_day']/100*args.slot:>+8,.0f}  {verdict}")
     print("  " + "-" * 108)
     picks = [m["coin"] for m in res if not m["excluded"]][:args.top]
-    print(f"  추천 {len(picks)}개: {picks if picks else '없음'}")
+    pending = all(any(r.startswith("판단 보류") for r in m["excluded"]) for m in res)
+    if pending:
+        print(f"  추천 보류 — 데이터가 더 쌓여야 판정할 수 있습니다 "
+              f"(첫 판정 최소 {args.window*0.25+1:.0f}시간, 신뢰할 순위는 3~7일)")
+    else:
+        print(f"  추천 {len(picks)}개: {picks if picks else '없음'}")
     print("  비용=즉시왕복 호가비용 중앙값  1틱=업비트 최소 스프레드  괴리=전 코인 중앙값 대비 김프 차이")
     print("  일%·일원 = 슬롯 1개를 굴린 하루 기대수익 (수수료·펀딩 반영). 코인 간 비교용")
     print("=" * 112)
