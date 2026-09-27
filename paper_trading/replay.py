@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUOTES_DIR = os.path.join(BASE, "real_trading", "logs", "quotes")
+FEE_RATE = 0.0018     # paper_trader._exit_slot 의 수수료 (업비트 0.05%×2 + 비트겟 0.04%×2)
 
 
 # ── 모의매매 코드를 재생용으로 불러오기 ───────────────────────────────
@@ -132,7 +133,8 @@ def replay(pt, trades: list, grid_cls, coins_cfg: dict, snaps: list) -> dict:
                 continue
             g.tick(up, bg, fx, usdt_krw, counter)
 
-    # 끝 시점에 열려 있는 슬롯의 평가손익 (청산 김프 기준)
+    # 끝 시점에 열려 있는 슬롯의 평가손익 = 지금 청산하면 받을 금액
+    # (청산 김프 − 진입 김프) × 슬롯자본 − 왕복 수수료 + 누적 펀딩. 실현 손익과 같은 기준.
     open_slots = {}
     if snaps:
         t, up, bg, fx, usdt = snaps[-1]
@@ -144,9 +146,23 @@ def replay(pt, trades: list, grid_cls, coins_cfg: dict, snaps: list) -> dict:
                 q = g.quote(up, bg, fx)
             except ValueError:
                 continue
-            pnl = [(q["exit_pct"] - s.entry_premium) / 100 * g.cpg for s in act]
+            pnl = [(q["exit_pct"] - s.entry_premium) / 100 * g.cpg - FEE_RATE * g.cpg + s.funding_krw
+                   for s in act]
             open_slots[c] = (len(act), sum(pnl), [round(s.entry_premium, 2) for s in act])
     return {"trades": list(trades), "open": open_slots}
+
+
+def run_variant(pt, trades: list, coins_cfg: dict, snaps: list,
+                time_stop: float = None, grid_cls=None) -> dict:
+    """한 설정으로 재생. 이전 재생의 거래가 섞이지 않게 비우고, 바꾼 시간손절은 되돌린다."""
+    trades.clear()
+    old = pt.TIME_STOP_HOURS
+    if time_stop is not None:
+        pt.TIME_STOP_HOURS = time_stop
+    try:
+        return replay(pt, trades, grid_cls or pt.PaperCoinGrid, coins_cfg, snaps)
+    finally:
+        pt.TIME_STOP_HOURS = old
 
 
 # ── 요약·대조 ────────────────────────────────────────────────────────

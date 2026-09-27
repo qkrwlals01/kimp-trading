@@ -266,7 +266,8 @@ def report(res: list, args, files: list, span_h: float):
     return picks
 
 
-def main() -> int:
+def parse_args(argv=None):
+    """명령줄 옵션. 다른 도구가 기본값을 그대로 쓰려면 parse_args([]) 로 부른다."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default=QUOTES_DIR, help="호가 로그 폴더")
     ap.add_argument("--days", type=int, default=7, help="최근 며칠치를 볼지")
@@ -281,7 +282,11 @@ def main() -> int:
     ap.add_argument("--slot", type=int, default=333_333, help="슬롯 자본(원) — 표시용")
     ap.add_argument("--top", type=int, default=5, help="추천 개수")
     ap.add_argument("--no-save", action="store_true", help="결과 JSON 저장 안 함")
-    args = ap.parse_args()
+    return ap.parse_args(argv)
+
+
+def main() -> int:
+    args = parse_args()
 
     data, files = load(args.dir, args.days)
     if not data:
