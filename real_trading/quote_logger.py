@@ -21,6 +21,14 @@
         mid_kimp    중간가 김프 (참고용)
         entry_kimp - exit_kimp = 그 순간 즉시 왕복하면 잃는 호가 비용
 
+      시장 정보 (2026-09-27 추가 — 같은 응답에 들어 있어 지금 남기지 않으면 되살릴 수 없다)
+        up_last, bg_last          마지막 체결가. 체결가 김프와 호가 김프를 비교해 호가 튐 측정
+        up_vol24_krw, bg_vol24_usdt  24시간 거래대금. 거래량 급증·업비트 점유율
+        bg_index                  비트겟 현물 지수가격. 선물 대신 현물 기준 김프 → 선물 괴리 분리
+        bg_oi                     비트겟 미결제약정 (코인 수량)
+      업비트 거래량은 호가 API 에 없어 시세 API 를 한 번 더 부른다. 이 조회가 실패해도
+      호가는 기록하고 해당 칸만 비운다 (호가가 본 목적).
+
       up_ts, bg_ts 는 각 거래소 응답에 담긴 시각이다. 업비트는 '호가창이 마지막으로
       바뀐 시각'이라 거래가 드문 코인은 호가가 그대로인 동안 차이가 자연히 커진다.
       차이가 크다고 곧 낡은 데이터는 아니다. 두 거래소 조회는 동시에 보내고
@@ -69,13 +77,15 @@ FIELDS = ["ts", "coin",
           "up_bid", "up_ask", "up_bid_sz", "up_ask_sz", "up_ts",
           "bg_bid", "bg_ask", "bg_bid_sz", "bg_ask_sz", "bg_ts", "funding",
           "fx", "usdt_bid", "usdt_ask",
-          "entry_kimp", "exit_kimp", "mid_kimp"]
+          "entry_kimp", "exit_kimp", "mid_kimp",
+          "up_last", "bg_last", "up_vol24_krw", "bg_vol24_usdt", "bg_index", "bg_oi"]
 
 log = logging.getLogger("quote_logger")
 _stop = False
 
 # 두 거래소를 동시에 조회하므로 세션을 거래소별로 분리 (Session 은 스레드 간 공유 비권장)
 _up = requests.Session()
+_upt = requests.Session()     # 업비트 시세 (거래량) — 호가 조회와 동시에 돌므로 따로
 _bg = requests.Session()
 
 
@@ -99,13 +109,24 @@ def fetch_upbit(markets: list) -> dict:
     return out
 
 
-def fetch_bitget() -> dict:
-    """비트겟 USDT 선물 전 종목 최우선 호가. {symbol: (bid, ask, bid_sz, ask_sz, ts_ms, funding)}"""
+def fetch_upbit_ticker(markets: list) -> dict:
+    """업비트 마지막 체결가와 24시간 거래대금. {market: (last, vol24_krw)}"""
+    r = _upt.get(f"{UPBIT}/ticker", params={"markets": ",".join(markets)}, timeout=TIMEOUT)
+    r.raise_for_status()
+    return {t["market"]: (float(t["trade_price"]), float(t["acc_trade_price_24h"]))
+            for t in r.json()}
+
+
+def _bitget_tickers() -> list:
     r = _bg.get(f"{BITGET}/mix/market/tickers", params={"productType": "USDT-FUTURES"},
                 timeout=TIMEOUT)
     r.raise_for_status()
+    return r.json().get("data") or []
+
+
+def _parse_bitget_quotes(data: list) -> dict:
     out = {}
-    for t in r.json().get("data") or []:
+    for t in data:
         try:
             out[t["symbol"]] = (float(t["bidPr"]), float(t["askPr"]),
                                 float(t["bidSz"]), float(t["askSz"]),
@@ -113,6 +134,24 @@ def fetch_bitget() -> dict:
         except (KeyError, ValueError, TypeError):
             continue
     return out
+
+
+def _parse_bitget_market(data: list) -> dict:
+    """{symbol: (last, vol24_usdt, index, oi)} — 값이 없으면 None"""
+    def f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    return {t.get("symbol"): (f(t.get("lastPr")), f(t.get("usdtVolume")),
+                              f(t.get("indexPrice")), f(t.get("holdingAmount")))
+            for t in data}
+
+
+def fetch_bitget() -> dict:
+    """비트겟 USDT 선물 전 종목 최우선 호가. {symbol: (bid, ask, bid_sz, ask_sz, ts_ms, funding)}
+    paper_trading/paper_trader.py 가 이 형식을 그대로 쓰므로 반환 형식을 바꾸지 말 것."""
+    return _parse_bitget_quotes(_bitget_tickers())
 
 
 def kimp(krw: float, usdt: float, fx: float) -> float:
@@ -124,8 +163,15 @@ def snapshot(coins: list, pool: ThreadPoolExecutor) -> list:
     """한 시점의 전 코인 호가. 한 거래소라도 실패하면 예외 — 반쪽짜리 행은 남기지 않는다."""
     markets = [f"KRW-{c}" for c in coins] + ["KRW-USDT"]
     fu = pool.submit(fetch_upbit, markets)
-    fb = pool.submit(fetch_bitget)
-    up, bg = fu.result(), fb.result()
+    ft = pool.submit(fetch_upbit_ticker, [f"KRW-{c}" for c in coins])
+    fb = pool.submit(_bitget_tickers)
+    up, raw_bg = fu.result(), fb.result()
+    bg, bg_mkt = _parse_bitget_quotes(raw_bg), _parse_bitget_market(raw_bg)
+    try:
+        up_tk = ft.result()
+    except Exception as e:                 # 거래량은 부가 정보 — 호가 기록은 계속한다
+        log.warning("업비트 시세 조회 실패, 거래량 칸 비움: %s", e)
+        up_tk = {}
     fx = get_usd_krw()
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
     usdt = up.get("KRW-USDT", (None, None, 0, 0, 0))
@@ -137,6 +183,8 @@ def snapshot(coins: list, pool: ThreadPoolExecutor) -> list:
             continue
         ub, ua, ubs, uas, uts = u
         bb, ba, bbs, bas, bts, fr = b
+        ul, uv = up_tk.get(f"KRW-{c}", ("", ""))
+        bl, bv, bi, boi = bg_mkt.get(f"{c}USDT", (None, None, None, None))
         rows.append({
             "ts": ts, "coin": c,
             "up_bid": ub, "up_ask": ua, "up_bid_sz": ubs, "up_ask_sz": uas, "up_ts": uts,
@@ -145,6 +193,11 @@ def snapshot(coins: list, pool: ThreadPoolExecutor) -> list:
             "entry_kimp": round(kimp(ua, bb, fx), 5),
             "exit_kimp": round(kimp(ub, ba, fx), 5),
             "mid_kimp": round(kimp((ub + ua) / 2, (bb + ba) / 2, fx), 5),
+            "up_last": ul, "bg_last": "" if bl is None else bl,
+            "up_vol24_krw": "" if uv == "" else round(uv),
+            "bg_vol24_usdt": "" if bv is None else round(bv),
+            "bg_index": "" if bi is None else bi,
+            "bg_oi": "" if boi is None else boi,
         })
     return rows
 
@@ -177,6 +230,23 @@ def append(rows: list, out_dir: str, day: str):
         w.writerows(rows)
 
 
+def rotate_if_old_schema(out_dir: str, day: str):
+    """오늘 파일의 컬럼 구조가 FIELDS 와 다르면 quotes_날짜_vN.csv 로 옮긴다.
+    이어 쓰면 옛 헤더 아래 새 컬럼이 붙어 줄이 어긋나기 때문이다."""
+    p = _path(out_dir, day)
+    if not os.path.exists(p):
+        return
+    with open(p, encoding="utf-8") as f:
+        header = f.readline().strip().split(",")
+    if header == FIELDS:
+        return
+    n = 1
+    while os.path.exists(p[:-4] + f"_v{n}.csv") or os.path.exists(p[:-4] + f"_v{n}.csv.gz"):
+        n += 1
+    os.rename(p, p[:-4] + f"_v{n}.csv")
+    log.info("컬럼 구조 변경 — 기존 파일을 %s 로 보관", os.path.basename(p[:-4] + f"_v{n}.csv"))
+
+
 def gzip_file(p: str):
     if not os.path.exists(p) or os.path.exists(p + ".gz"):
         return
@@ -202,11 +272,12 @@ def run(coins: list, interval: int, out_dir: str) -> int:
     log.info("기록 시작 — %d개 코인 %s, %d초 간격, 저장 %s", len(ok), ok, interval, out_dir)
 
     today = _utc_day()
-    for p in glob.glob(os.path.join(out_dir, "quotes_*.csv")):   # 재시작 시 지난 날짜 정리
+    rotate_if_old_schema(out_dir, today)
+    for p in glob.glob(os.path.join(out_dir, "quotes_*.csv")):   # 재시작 시 지난 날짜·옛 구조 파일 정리
         if not p.endswith(f"_{today}.csv"):
             gzip_file(p)
 
-    pool = ThreadPoolExecutor(max_workers=2)
+    pool = ThreadPoolExecutor(max_workers=3)
     cycles = rows_total = errors = consec = 0
     last_beat = time.time()
 
@@ -250,21 +321,23 @@ def once(coins: list) -> int:
     ok, bad = validate(coins)
     if bad:
         print(f"제외 (한쪽 거래소에 없음): {bad}")
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         rows = snapshot(ok, pool)
     if not rows:
         print("조회 결과 없음")
         return 1
     r0 = rows[0]
     print(f"시각 {r0['ts']}  환율 {r0['fx']:,.1f}  업비트 USDT {r0['usdt_bid']:,.0f}/{r0['usdt_ask']:,.0f}")
-    print(f"{'코인':6}{'진입김프':>10}{'청산김프':>10}{'중간김프':>10}{'즉시왕복비용':>12}"
-          f"{'시각차':>9}{'펀딩/8h':>10}")
-    print("-" * 69)
+    print(f"{'코인':6}{'진입김프':>10}{'청산김프':>10}{'중간김프':>10}{'체결가김프':>11}{'즉시왕복비용':>12}"
+          f"{'펀딩/8h':>10}{'업비트24h':>11}")
+    print("-" * 82)
     for r in rows:
-        skew = abs(r["up_ts"] - r["bg_ts"])
+        last_k = (kimp(r["up_last"], r["bg_last"], r["fx"])
+                  if r["up_last"] != "" and r["bg_last"] != "" else float("nan"))
+        vol = f"{r['up_vol24_krw']/1e8:>8,.0f}억" if r["up_vol24_krw"] != "" else "        -"
         print(f"{r['coin']:6}{r['entry_kimp']:>9.3f}%{r['exit_kimp']:>9.3f}%{r['mid_kimp']:>9.3f}%"
-              f"{r['entry_kimp'] - r['exit_kimp']:>11.4f}%{skew:>7}ms{r['funding']*100:>9.4f}%")
-    print("-" * 69)
+              f"{last_k:>10.3f}%{r['entry_kimp'] - r['exit_kimp']:>11.4f}%{r['funding']*100:>9.4f}%{vol:>11}")
+    print("-" * 82)
     print("즉시왕복비용 = 진입김프 − 청산김프 (지금 진입해 바로 청산하면 호가로 잃는 폭, 수수료 별도)")
     return 0
 
