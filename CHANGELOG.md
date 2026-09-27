@@ -196,6 +196,9 @@ trades.csv (06-28 ~ 07-29, 14,470건, 가상 자본 1.2억) 재계산:
   - 두 거래소 동시 1회 조회 (코인별 개별 조회 제거), 실제 펀딩비 누적
   - 가상손절이 "익절"로 기록되던 버그 수정
   - 기록 파일 `trades_book.csv` (옛 `trades.csv` 는 보존), `spread_krw` 컬럼 추가
+- 가상 자본 1억2천만 → **1천만원** (실자본 규모, 업비트 833만 + 비트겟 167만, 슬롯당 약 16.7만원)
+  - 모의매매는 최우선 호가만 보므로 슬롯이 크면 다음 호가까지 먹는 비용이 빠진다
+- 2026-09-27 07:00 UTC 서버에서 호가 기준 모의매매 재가동 (옛 파일은 `paper_trading/_backup_20260927/`)
 - 호가 로거 `real_trading/quote_logger.py` — 서버에서 2026-09-26 06:53 UTC 부터 상시 수집 (`kimp-quotes`)
 - 코인 선정기 `real_trading/coin_selector.py` — 호가 로그로 탈락 조건·기대수익 판정
 - 분석 도구 (data/, real_trading/spread_screener.py) — 커밋 73cd2a6 참고
@@ -216,14 +219,14 @@ trades.csv (06-28 ~ 07-29, 14,470건, 가상 자본 1.2억) 재계산:
 
 ## 다음 할 일
 - **~10-03**: 호가 로그 7일치로 `coin_selector` 판정. 호가 기준에서 우위가 사라지면 전략 중단
-- 호가 기준 모의매매 재가동 여부와 가상 자본 설정(1.2억 vs 실자본 1천만원) 결정
+- 호가 기준 모의매매(09-27~) 1주 결과를 `coin_selector` 판정과 교차 검증
 - 시뮬레이터·전략 보강: 펀딩비, 절대 김프 상한, 괴리 필터, 사다리 진입, 지정가
 
 ---
 
 ## 서버 운영 정보
 - 주소: oracle cloud (<USER>@<SERVER>, <SERVER>), 키 `~/.ssh/<KEY_FILE>`
-- 모의매매: `sudo systemctl [start|stop|status] kimp` — 현재 중지, 단 enabled 라 재부팅 시 자동 시작
+- 모의매매: `sudo systemctl [start|stop|status] kimp` — 2026-09-27 부터 호가 기준으로 가동 중
 - 호가 로거: `sudo systemctl [start|stop|status] kimp-quotes` — 상시 가동
 - 실시간 로그: `sudo journalctl -u kimp -f` / `sudo journalctl -u kimp-quotes -f`
 - venv: `~/kimp_venv` (프로젝트 외부, Python 3.10)
