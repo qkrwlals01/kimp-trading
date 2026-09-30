@@ -21,19 +21,29 @@
       받아 온 호가가 다르므로 개별 거래는 어긋날 수 있다. 그래서 거래 수·코인별 손익·
       청산 사유 같은 합계와, 진입 시각·김프가 가까운 거래끼리의 일치율로 비교한다.
 
-개선안을 시험할 때 (나중):
-      PaperCoinGrid 를 상속해 규칙을 바꾼 클래스를 만들고 --grid 모듈:클래스 로 넘긴다.
-      전략 로직은 계속 모의매매 코드 한 곳에만 둔다.
+개선안을 시험할 때:
+      paper_trading/variants.py 의 설정 문자열로 준다 (익절 환율 고정, 진입 필터, 투입 상한 등).
+      개선안은 PaperCoinGrid 를 상속해 바뀐 규칙만 덮어쓴다.
+
+손익 구성 (끝에 함께 출력):
+      합계 = 환율 노출분 + 김프 움직임(중간가) + 펀딩 − 수수료 − 호가 비용
+      환율 노출분 = Σ 열린 슬롯 금액 × 은행 환율 변화율. 헤지 포지션 손익 ≈ 금액 × (환율 변화율 + 김프 변화)
+      이라서, 열어 둔 금액만큼 원/달러에 노출된다. 한국 가격이 환율을 늦게 따라가면 환율분과 김프분이
+      반대 부호로 함께 커지므로, 짧은 기간에는 둘을 따로 해석하지 말고 '합계 − 환율분'으로 본다.
+      환율은 5분 중앙값을 쓴다. 은행 환율 피드가 가끔 튀는데(9/30 08:26 KST 1,351.5→1,358.4→1,350.5, 70초),
+      튀는 사이 봇이 슬롯을 열고 닫으면 노출분이 수만 원씩 부풀기 때문이다. 튐 때문에 생긴 거래 비용은
+      수수료·호가비용에 그대로 남는다.
 
 실행:
       python -m paper_trading.replay                                  # 전 기간, 현행 설정
       python -m paper_trading.replay --start 2026-09-27T07:00:59Z \\
              --compare paper_trading/logs/trades_book.csv             # 실제 기록과 대조
       python -m paper_trading.replay --time-stop 72                   # 설정만 바꿔 재생
+      python -m paper_trading.replay --variant "tp=entry,entry_q=0.2" # 개선안
       python -m paper_trading.replay --dir 다른/폴더 --save 결과.csv
 """
 
-import sys, os, csv, glob, gzip, argparse, logging, importlib, statistics
+import sys, os, csv, glob, gzip, bisect, argparse, logging, importlib, statistics
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -70,7 +80,9 @@ def load_paper_trader():
         if isinstance(h, logging.FileHandler):      # 재생 기록이 trading.log 에 섞이지 않게
             root.removeHandler(h)
             h.close()
-    pt.logger.setLevel(logging.WARNING)             # 10초마다 찍던 INFO 출력 끔
+    # 10초마다 찍던 INFO 와 가상손절 WARNING 을 끈다. 둘 다 재생 결과 요약에 나오고, 찍히면
+    # 재생 시각이 아니라 지금 시각이 붙어 헷갈린다. 코드 오류(ERROR)는 계속 보이게 둔다.
+    pt.logger.setLevel(logging.ERROR)
     trades = []
     pt.time = _Clock
     pt.datetime = _ReplayDatetime
@@ -120,11 +132,55 @@ def load_snapshots(qdir: str, coins_cfg: dict, start: float, end: float):
 
 # ── 재생 ─────────────────────────────────────────────────────────────
 
-def replay(pt, trades: list, grid_cls, coins_cfg: dict, snaps: list) -> dict:
-    grids = {c: grid_cls(c, cfg) for c, cfg in coins_cfg.items()}
-    counter = [0]
-    for t, up, bg, fx, usdt in snaps:
+def make_grids(grid_cls, coins_cfg: dict) -> dict:
+    """코인별 그리드. 코인끼리 공유하는 상태가 있는 개선안(투입 상한)은 make_grids 로 한꺼번에 만든다."""
+    if hasattr(grid_cls, "make_grids"):
+        return grid_cls.make_grids(coins_cfg)
+    return {c: grid_cls(c, cfg) for c, cfg in coins_cfg.items()}
+
+
+def mark_slot(g, s, q: dict, usdt_krw: float) -> tuple:
+    """열린 슬롯을 지금 청산하면 받을 금액 — paper_trader._exit_slot 과 같은 식.
+    반환: (순손익, 수수료, 호가비용)
+
+    김프 차이 × 슬롯자본으로 근사하면 안 된다. 청산 김프를 지금 환율로 다시 계산하므로
+    진입 뒤 환율이 움직인 만큼 틀린다 (실제 손익은 가격 비율과 USDT 환산으로 정해진다)."""
+    gross = (s.coin_qty * (q["up_bid"] - s.upbit_entry_px)
+             + s.short_qty * (s.bitget_entry_px - q["bg_ask"]) * usdt_krw)
+    mid = (s.coin_qty * ((q["up_bid"] + q["up_ask"]) / 2 - s.upbit_entry_mid)
+           + s.short_qty * (s.bitget_entry_mid - (q["bg_bid"] + q["bg_ask"]) / 2) * usdt_krw)
+    fee = FEE_RATE * g.cpg
+    return gross - fee + s.funding_krw, fee, mid - gross
+
+
+def smooth_fx(snaps: list, n: int = 31) -> list:
+    """시점별 환율의 직전 n개(10초 간격이면 5분) 중앙값. 환율 노출분 계산용 — 피드 튐 제거."""
+    win, srt, out = [], [], []
+    for x in snaps:
+        win.append(x[3])
+        bisect.insort(srt, x[3])
+        if len(win) > n:
+            del srt[bisect.bisect_left(srt, win.pop(0))]
+        out.append(srt[len(srt) // 2])
+    return out
+
+
+def replay(pt, trades: list, grid_cls, coins_cfg: dict, snaps: list, history: list = ()) -> dict:
+    grids = make_grids(grid_cls, coins_cfg)
+    # 진입 필터처럼 과거 분포가 필요한 개선안은 시작 전 기록으로 미리 채운다 (거래는 안 함)
+    for t, up, bg, fx, usdt in history:
         _Clock.now = t
+        for g in grids.values():
+            if hasattr(g, "warm"):
+                g.warm(up, bg, fx)
+
+    counter = [0]
+    fxs = smooth_fx(snaps)
+    fx_pnl, open_krw, krw_sum, krw_max = 0.0, 0.0, 0.0, 0.0
+    for k, (t, up, bg, fx, usdt) in enumerate(snaps):
+        _Clock.now = t
+        if k:
+            fx_pnl += open_krw * (fxs[k] / fxs[k - 1] - 1)   # 직전 시점부터 열려 있던 금액 × 환율 변화
         usdt_krw = usdt if usdt else fx           # 모의매매와 같은 폴백
         for c, g in grids.items():
             cfg = coins_cfg[c]
@@ -132,35 +188,47 @@ def replay(pt, trades: list, grid_cls, coins_cfg: dict, snaps: list) -> dict:
             if cfg["upbit_market"] not in up or cfg["bitget_symbol"] not in bg:
                 continue
             g.tick(up, bg, fx, usdt_krw, counter)
+        open_krw = sum(g.cpg * g.active_count() for g in grids.values())
+        krw_sum += open_krw
+        krw_max = max(krw_max, open_krw)
 
-    # 끝 시점에 열려 있는 슬롯의 평가손익 = 지금 청산하면 받을 금액
-    # (청산 김프 − 진입 김프) × 슬롯자본 − 왕복 수수료 + 누적 펀딩. 실현 손익과 같은 기준.
-    open_slots = {}
+    # 끝 시점에 열려 있는 슬롯 = 지금 청산하면 받을 금액 (실현 손익과 같은 식)
+    open_slots, open_fee, open_spread, open_fund = {}, 0.0, 0.0, 0.0
     if snaps:
         t, up, bg, fx, usdt = snaps[-1]
+        usdt_krw = usdt if usdt else fx
         for c, g in grids.items():
             act = [s for s in g.slots if s.active]
             if not act:
                 continue
             try:
                 q = g.quote(up, bg, fx)
-            except ValueError:
+            except (ValueError, KeyError):
                 continue
-            pnl = [(q["exit_pct"] - s.entry_premium) / 100 * g.cpg - FEE_RATE * g.cpg + s.funding_krw
-                   for s in act]
-            open_slots[c] = (len(act), sum(pnl), [round(s.entry_premium, 2) for s in act])
-    return {"trades": list(trades), "open": open_slots}
+            marks = [mark_slot(g, s, q, usdt_krw) for s in act]
+            open_slots[c] = (len(act), sum(m[0] for m in marks), [round(s.entry_premium, 2) for s in act])
+            open_fee += sum(m[1] for m in marks)
+            open_spread += sum(m[2] for m in marks)
+            open_fund += sum(s.funding_krw for s in act)
+    n = max(len(snaps), 1)
+    return {"trades": list(trades), "open": open_slots,
+            "open_fee": open_fee, "open_spread": open_spread, "open_fund": open_fund,
+            "fx_pnl": fx_pnl, "krw_avg": krw_sum / n, "krw_max": krw_max,
+            "full": sum(g.cpg * g.n_slots for g in grids.values()),
+            "fx0": snaps[0][3] if snaps else 0.0, "fx1": snaps[-1][3] if snaps else 0.0,
+            "orders": sum(getattr(g, "orders", 0) for g in grids.values()),
+            "thin": sum(getattr(g, "thin", 0) for g in grids.values())}
 
 
 def run_variant(pt, trades: list, coins_cfg: dict, snaps: list,
-                time_stop: float = None, grid_cls=None) -> dict:
+                time_stop: float = None, grid_cls=None, history: list = ()) -> dict:
     """한 설정으로 재생. 이전 재생의 거래가 섞이지 않게 비우고, 바꾼 시간손절은 되돌린다."""
     trades.clear()
     old = pt.TIME_STOP_HOURS
     if time_stop is not None:
         pt.TIME_STOP_HOURS = time_stop
     try:
-        return replay(pt, trades, grid_cls or pt.PaperCoinGrid, coins_cfg, snaps)
+        return replay(pt, trades, grid_cls or pt.PaperCoinGrid, coins_cfg, snaps, history)
     finally:
         pt.TIME_STOP_HOURS = old
 
@@ -168,6 +236,8 @@ def run_variant(pt, trades: list, coins_cfg: dict, snaps: list,
 # ── 요약·대조 ────────────────────────────────────────────────────────
 
 def _reason(r: dict, time_stop_h: float) -> str:
+    if r.get("reason"):                          # 개선안은 청산 사유를 기록에 남긴다
+        return r["reason"]
     if float(r["exit_premium"]) >= float(r["target_premium"]) - 1e-9:
         return "익절"
     if float(r["hold_hours"]) >= time_stop_h - 0.02:
@@ -237,6 +307,25 @@ def print_summary(label: str, s: dict, open_slots: dict = None):
         print(f"      끝 시점 미청산 {n}개, 평가손익 {u:+,.0f}원")
 
 
+def attribution(s: dict, res: dict) -> dict:
+    """합계 = 환율 노출분 + 김프 움직임(중간가) + 펀딩 − 수수료 − 호가비용. 김프분은 나머지로 구한다."""
+    unreal = sum(v[1] for v in res["open"].values())
+    total = s["net"] + unreal
+    fee, spread = s["fee"] + res["open_fee"], s["spread"] + res["open_spread"]
+    fund, fx = s["fund"] + res["open_fund"], res["fx_pnl"]
+    return {"total": total, "unreal": unreal, "fx": fx, "fee": fee, "spread": spread, "fund": fund,
+            "kimp": total - fx - fund + fee + spread, "ex_fx": total - fx}
+
+
+def print_attribution(s: dict, res: dict):
+    a = attribution(s, res)
+    print(f"      구성: 환율 노출 {a['fx']:+,.0f} / 김프(중간가) {a['kimp']:+,.0f} / 펀딩 {a['fund']:+,.0f}"
+          f" / 수수료 {-a['fee']:+,.0f} / 호가비용 {-a['spread']:+,.0f}  → 환율 제외 {a['ex_fx']:+,.0f}원")
+    if res["full"] and res["fx0"]:
+        print(f"      평균 투입 {res['krw_avg']:,.0f}원 (최대 {res['full']:,.0f}원의 {res['krw_avg'] / res['full'] * 100:.0f}%)"
+              f", 은행 환율 {res['fx0']:,.1f} → {res['fx1']:,.1f} ({(res['fx1'] / res['fx0'] - 1) * 100:+.2f}%)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default=QUOTES_DIR, help="호가 로그 폴더")
@@ -248,29 +337,49 @@ def main() -> int:
     ap.add_argument("--total", type=int, default=None, help="총 시드(원) 덮어쓰기")
     ap.add_argument("--time-stop", type=float, default=None, help="시간손절(시간) 덮어쓰기")
     ap.add_argument("--grid", default=None, help="개선안 클래스 '모듈:클래스' (PaperCoinGrid 상속)")
+    ap.add_argument("--variant", default=None,
+                    help="개선안 설정 문자열 (paper_trading/variants.py), 예: tp=entry,entry_q=0.2")
     ap.add_argument("--compare", default=None, help="실제 모의매매 기록 trades_book.csv 와 대조")
     ap.add_argument("--save", default=None, help="재생 거래를 CSV 로 저장")
     args = ap.parse_args()
 
     pt, trades = load_paper_trader()
 
-    # 설정: 기본은 모의매매 설정 그대로, 주어진 값만 덮어쓴다
-    coins_cfg = {c: dict(cfg) for c, cfg in pt.COINS.items()
-                 if not args.coins or c in [x.upper() for x in args.coins]}
-    for cfg in coins_cfg.values():
-        if args.spacing is not None:
-            cfg["spacing"] = args.spacing
-        if args.slots is not None:
-            cfg["n_slots"] = args.slots
-        if args.total is not None:
-            lev = cfg["leverage"]
-            cfg["upbit_capital"] = args.total * lev // (lev + 1) // len(coins_cfg)
+    history_h = 0.0
+    if args.variant is not None:
+        # 개선안: 코인·자본·간격까지 설정 문자열 하나로 받는다 (옛 옵션과 섞으면 어느 쪽이 이기는지 헷갈림)
+        if args.coins or args.spacing is not None or args.slots is not None or args.total is not None or args.grid:
+            print("--variant 와 --coins/--spacing/--slots/--total/--grid 는 함께 못 씁니다. "
+                  "설정 문자열 안에 coins=A+B, spacing=0.4 처럼 넣으세요.")
+            return 1
+        from paper_trading import variants as va
+        from paper_trading.paper_settings import PAPER_TOTAL_KRW
+        try:
+            coins_cfg, tstop, grid_cls, _ = va.build(args.variant, pt.COINS, PAPER_TOTAL_KRW)
+        except ValueError as e:
+            print(f"개선안 설정 오류: {e}")
+            return 1
+        if tstop is not None:
+            pt.TIME_STOP_HOURS = tstop
+        history_h = va.history_hours([args.variant])
+    else:
+        # 설정: 기본은 모의매매 설정 그대로, 주어진 값만 덮어쓴다
+        coins_cfg = {c: dict(cfg) for c, cfg in pt.COINS.items()
+                     if not args.coins or c in [x.upper() for x in args.coins]}
+        for cfg in coins_cfg.values():
+            if args.spacing is not None:
+                cfg["spacing"] = args.spacing
+            if args.slots is not None:
+                cfg["n_slots"] = args.slots
+            if args.total is not None:
+                lev = cfg["leverage"]
+                cfg["upbit_capital"] = args.total * lev // (lev + 1) // len(coins_cfg)
+        grid_cls = pt.PaperCoinGrid
+        if args.grid:
+            mod, cls = args.grid.split(":")
+            grid_cls = getattr(importlib.import_module(mod), cls)
     if args.time_stop is not None:
         pt.TIME_STOP_HOURS = args.time_stop
-    grid_cls = pt.PaperCoinGrid
-    if args.grid:
-        mod, cls = args.grid.split(":")
-        grid_cls = getattr(importlib.import_module(mod), cls)
 
     actual = []
     if args.compare:
@@ -282,12 +391,15 @@ def main() -> int:
         print(f"  ⚠ --start 미지정 — 실제 기록의 첫 진입 시각으로 시작합니다. 모의매매 시작 시각을 아시면 --start 로 주세요")
     end = datetime.fromisoformat(args.end.replace("Z", "+00:00")).timestamp() if args.end else None
 
-    snaps, files = load_snapshots(args.dir, coins_cfg, start, end)
+    pre = history_h * 3600 if start else 0
+    snaps, files = load_snapshots(args.dir, coins_cfg, start - pre if start else None, end)
+    history = [x for x in snaps if start and x[0] < start]
+    snaps = snaps[len(history):]
     if not snaps:
         print(f"재생할 호가가 없습니다: {args.dir}")
         return 1
     t0, t1 = snaps[0][0], snaps[-1][0]
-    res = replay(pt, trades, grid_cls, coins_cfg, snaps)
+    res = replay(pt, trades, grid_cls, coins_cfg, snaps, history)
     ts_h = pt.TIME_STOP_HOURS
     c0 = next(iter(coins_cfg.values()))
 
@@ -296,9 +408,17 @@ def main() -> int:
           f"{datetime.fromtimestamp(t1, timezone.utc):%m-%d %H:%M} UTC ({(t1-t0)/3600:.1f}시간, 시점 {len(snaps):,}개)")
     print(f"  설정: {grid_cls.__name__}, 코인 {len(coins_cfg)}개, spacing {c0['spacing']}%, "
           f"슬롯 {c0['n_slots']}개, 슬롯당 {c0['upbit_capital']/c0['n_slots']:,.0f}원, 시간손절 {ts_h}h")
+    if args.variant:
+        print(f"  개선안: {args.variant}  (코인 {'+'.join(coins_cfg)}, 레버리지 {c0['leverage']}배)")
     print("=" * 100)
+    if history_h and not history:
+        print(f"  ⚠ --start 가 없어 진입 필터를 미리 채우지 못했습니다 — 처음 {history_h * 0.25:.0f}시간은 진입하지 않습니다")
     sim = summarize(res["trades"], ts_h)
     print_summary("재생", sim, res["open"])
+    print_attribution(sim, res)
+    if res["orders"] and res["thin"] / res["orders"] > 0.01:
+        print(f"      ⚠ 주문 {res['orders']:,}건 중 {res['thin'] / res['orders'] * 100:.0f}% 가 최우선 호가 잔량보다 큼"
+              " — 다음 호가까지 먹는 비용이 빠져 있음")
 
     if actual:
         act = [r for r in actual if t0 <= _iso(r["exit_dt"]) <= t1 and r["coin"] in coins_cfg]
@@ -334,7 +454,8 @@ def main() -> int:
 
     if args.save:
         with open(args.save, "w", newline="", encoding="utf-8") as f:
-            w = csv.DictWriter(f, fieldnames=pt.TRADE_LOG_HEADER)
+            extra = [k for k in ("reason", "exit_fx") if res["trades"] and k in res["trades"][0]]
+            w = csv.DictWriter(f, fieldnames=pt.TRADE_LOG_HEADER + extra)
             w.writeheader()
             w.writerows(res["trades"])
         print(f"  저장: {args.save}")

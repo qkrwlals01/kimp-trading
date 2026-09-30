@@ -20,6 +20,10 @@
          (시장가: 업비트 매도호가에 사고 비트겟 매수호가에 숏 = entry_kimp)
    청산: 청산김프가 진입가 + spacing 이상이거나 --hold 시간 경과 시
          (시장가: 업비트 매수호가에 팔고 비트겟 매도호가에 숏청산 = exit_kimp)
+         청산김프는 진입 때 은행 환율로 고정해 다시 잰다. 로거의 exit_kimp 는 그 시점 환율로
+         계산돼 있어서, 차이를 그대로 쓰면 환율 변화가 손익처럼 섞인다 (2026-09-30 발견.
+         모의매매 청산 301건에서 실제 손익과의 상관: 진입 환율 고정 0.999, 그 시점 환율 0.90 —
+         뒤쪽 오차는 환율 변화와 상관 −0.86 으로, 거의 환율 변화 그 자체였다)
    비용: 수수료(시장가 0.18%, 지정가 0.14%) + 보유 중 펀딩비(양수면 숏이 수취)
    --maker 는 양쪽 모두 중간가에 체결된다고 본다. 스프레드를 내지도 벌지도 않는
    중립 가정이며, 실제 지정가는 미체결·역선택이 있어 이보다 나쁠 수 있다.
@@ -59,7 +63,8 @@ def _open(p):
 
 
 def load(qdir: str, days: int):
-    """최근 days 일치 로그. {coin: [(t, entry, exit, mid, funding, bg_mid, up_bid, up_ask), ...]}"""
+    """최근 days 일치 로그.
+    {coin: [(t, entry, exit, mid, funding, bg_mid, up_bid, up_ask, bg_bid, bg_ask, fx), ...]}"""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y%m%d")
     files = sorted(f for f in glob.glob(os.path.join(qdir, "quotes_*.csv*"))
                    if os.path.basename(f)[7:15] >= cutoff)
@@ -79,6 +84,7 @@ def load(qdir: str, days: int):
                         float(r["funding"]),
                         (float(r["bg_bid"]) + float(r["bg_ask"])) / 2,
                         float(r["up_bid"]), float(r["up_ask"]),
+                        float(r["bg_bid"]), float(r["bg_ask"]), float(r["fx"]),
                     ))
                 except (ValueError, KeyError, TypeError):
                     continue
@@ -123,17 +129,28 @@ def max_rise(rows: list, horizon_s: float) -> float:
     return best
 
 
+def _kimp(krw: float, usdt: float, fx: float) -> float:
+    return (krw / (usdt * fx) - 1) * 100
+
+
+def _exit_at(r: tuple, fx0: float, maker: bool) -> float:
+    """이 시점에 청산하면 받는 김프를 진입 때 환율 fx0 로 잰 값."""
+    _, _, _, _, _, bg_mid, up_bid, up_ask, bg_bid, bg_ask, _ = r
+    return _kimp((up_bid + up_ask) / 2, bg_mid, fx0) if maker else _kimp(up_bid, bg_ask, fx0)
+
+
 def simulate(rows: list, q: float, window_s: float, spacing: float,
              hold_s: float, fee: float, maker: bool, interval: float) -> dict:
-    """슬롯 1개를 실제 호가로 굴린다. 반환: 거래 목록 요약."""
+    """슬롯 1개를 실제 호가로 굴린다. 반환: 거래 목록 요약.
+    진입 판단은 그 시점 은행 환율 김프(김프 수준), 손익은 진입 환율로 고정한 김프 변화(= 실제 손익)."""
     win, srt = deque(), []
     min_n = max(30, int(window_s / interval * 0.25))   # 창의 25% 이상 쌓여야 분위수 판단
-    pos = None                                     # [진입가, 진입시각, 누적펀딩%]
+    pos = None                                     # [진입가, 진입시각, 누적펀딩%, 진입 환율]
     trades, last_t = [], None
 
-    for t, en, ex, mid, fr, *_ in rows:
+    for r in rows:
+        t, en, ex, mid, fr = r[:5]
         px_in = mid if maker else en
-        px_out = mid if maker else ex
 
         win.append((t, px_in))
         bisect.insort(srt, px_in)
@@ -146,16 +163,16 @@ def simulate(rows: list, q: float, window_s: float, spacing: float,
         last_t = t
 
         if pos is not None:
-            gain = px_out - pos[0]
+            gain = _exit_at(r, pos[3], maker) - pos[0]
             if gain >= spacing or t - pos[1] >= hold_s:
                 trades.append((gain - fee + pos[2], gain >= spacing, t - pos[1]))
                 pos = None
             continue
 
         if len(srt) >= min_n and px_in <= srt[int(q * (len(srt) - 1))]:
-            pos = [px_in, t, 0.0]
+            pos = [px_in, t, 0.0, r[10]]
 
-    unreal = (rows[-1][3 if maker else 2] - pos[0]) if (pos and rows) else 0.0
+    unreal = (_exit_at(rows[-1], pos[3], maker) - pos[0]) if (pos and rows) else 0.0
     return {"trades": trades, "open_unreal": unreal, "open": pos is not None}
 
 
