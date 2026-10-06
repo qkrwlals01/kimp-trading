@@ -69,6 +69,12 @@ PAPER_COINS = {
     "LINK": _COIN("KRW-LINK", "LINKUSDT", "LINK"),
 }
 
+# 수수료 (편도, 시장가). 2026-10-06~ 한국 쪽은 빗썸 기준: 기본 0.25%, 할인 요율 적용 시 0.04% (30일마다 재신청).
+# 업비트는 0.05% 정액. 모의매매 호가는 업비트 그대로이고 수수료만 빗썸 기준이다 (실거래를 빗썸에서 할 계획).
+PAPER_FEE_KR = 0.0004            # 빗썸 원화마켓 (할인 요율 적용). 이전 업비트 0.0005
+PAPER_FEE_BG = 0.0004            # 비트겟 USDT 선물 taker
+PAPER_FEE_ROUND = (PAPER_FEE_KR + PAPER_FEE_BG) * 2      # 슬롯 하나 왕복 (진입 2건 + 청산 2건) = 0.16%
+
 PAPER_STOP_MARGIN_RATIO = 0.20   # 마진비율 20% 이하 → 가상 손절 (레버리지 5배면 가격 +16% 상당)
 PAPER_TIME_STOP_HOURS   = None   # 시간손절 (None = 없음, 2026-10-06~). 이전 24시간
 PAPER_POLL_INTERVAL     = 10     # 폴링 주기 (초)

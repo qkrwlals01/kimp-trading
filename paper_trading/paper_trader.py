@@ -26,6 +26,8 @@
     시작할 때 호가 로거 기록(real_trading/logs/quotes)으로 24시간 분포를 미리 채운다.
   - 시간손절 없음 (PAPER_TIME_STOP_HOURS = None). 손절은 가상손절만.
   - 거래 기록에 청산 사유(reason)와 청산 때 은행 환율(exit_fx) 추가.
+  - 수수료를 빗썸 기준으로 (PAPER_FEE_KR 0.04%, 이전 업비트 0.05%). 호가는 업비트 그대로.
+    수수료는 손익 기록에만 쓰이고 진입·익절 판단에는 쓰이지 않는다.
   옵션을 모두 끄면(tp="exit", entry_q=None, 시간손절 24) 2026-09-26 버전과 똑같이 거래한다.
 
   한계: 최우선 호가 잔량보다 큰 주문이 다음 호가까지 먹는 추가 미끄러짐은 반영하지 않는다.
@@ -48,6 +50,7 @@ from paper_trading.paper_settings import (
     PAPER_POLL_INTERVAL as POLL_INTERVAL,
     PAPER_STOP_MARGIN_RATIO as STOP_MARGIN_RATIO,
     PAPER_TIME_STOP_HOURS as TIME_STOP_HOURS,      # 이 시간 이상 보유 시 강제 청산. None = 시간손절 없음
+    PAPER_FEE_ROUND as FEE_ROUND,                  # 슬롯 왕복 수수료율 (한국 거래소 2건 + 비트겟 2건)
 )
 
 # 진입 필터를 시작할 때 미리 채울 호가 로거 기록
@@ -248,7 +251,7 @@ class PaperCoinGrid:
         spread_krw = mid_gross - gross_pnl
 
         hold_h     = (time.time() - slot.entry_time) / 3600
-        fee_krw    = (0.0005 * 2 + 0.0004 * 2) * self.cpg  # 업비트 0.05%×2 + 비트겟 0.04%×2
+        fee_krw    = FEE_ROUND * self.cpg                  # 한국 거래소 ×2 + 비트겟 ×2 (paper_settings)
         slip_krw   = 0.0                                   # 최우선 잔량 초과 미끄러짐 — 미반영
         fund_krw   = slot.funding_krw
         net_pnl    = gross_pnl - fee_krw - slip_krw + fund_krw
@@ -429,7 +432,7 @@ class PaperTrader:
         q = first_cfg.get("entry_q")
         filt = f"{first_cfg.get('window', 24)}h 하위 {q * 100:.0f}%" if q is not None else "없음"
         stop = f"{TIME_STOP_HOURS}h" if TIME_STOP_HOURS else "없음 (가상손절만)"
-        logger.info(f"익절 판단 {tp}  |  진입 필터 {filt}  |  시간손절 {stop}")
+        logger.info(f"익절 판단 {tp}  |  진입 필터 {filt}  |  시간손절 {stop}  |  수수료 왕복 {FEE_ROUND * 100:.2f}%")
         logger.info(f"폴링 {POLL_INTERVAL}초  |  거래 로그: {TRADE_LOG}")
         logger.info("-" * 60)
 

@@ -141,7 +141,8 @@ footer { color: var(--muted); font-size: 12px; margin-top: 16px; line-height: 1.
 
   <footer>
     서버에 아무것도 설치하지 않고 10초마다 SSH 로 기록을 읽기만 합니다 (tools/live_dashboard.py). 이 화면은 이 맥에서만 열립니다.<br>
-    미청산 평가 = 지금 청산하면 받을 금액 (업비트 매수호가·비트겟 매도호가·업비트 USDT, 수수료 0.18%, 펀딩 추정 포함). 열린 슬롯은 진입 로그와 청산 기록을 맞춰 복원합니다.<br>
+    미청산 평가 = 지금 청산하면 받을 금액 (업비트 매수호가·비트겟 매도호가·업비트 USDT, 왕복 수수료, 펀딩 추정 포함). 열린 슬롯은 진입 로그와 청산 기록을 맞춰 복원합니다.<br>
+    수수료는 빗썸 기준입니다 (호가는 업비트). 실제 빗썸 김프·스프레드는 업비트와 다를 수 있습니다.<br>
     진입 경계는 호가 로그로 다시 계산한 최근 24시간 하위 20% 김프라서 봇 내부 값과 조금 다를 수 있습니다. "지금 청산김프"는 진입 때 환율로 잰 값으로, 봇이 익절을 판단하는 값입니다.<br>
     김프가 몇 분 동안만 1%p 넘게 뚝 떨어진 자국은 대개 은행 환율 피드가 튄 것입니다 (예: 10/06 08:28 KST 1,342.5 → 1,358.5 → 1,342.0, 2분). 차트에 마우스를 올리면 그 시각 환율이 보입니다.
   </footer>
@@ -424,7 +425,8 @@ function render() {
   const S = st.strategy;
   document.getElementById("strategy").textContent =
     `${S.coins.join(" · ")}  |  익절 판단 ${S.tp === "entry" ? "진입 환율 고정" : "지금 환율"}  |  진입 ${S.window}h 하위 ${Math.round((S.entry_q || 0) * 100)}%  |  ` +
-    `시간손절 ${S.time_stop ? S.time_stop + "h" : "없음 (가상손절 +" + S.stop_move.toFixed(0) + "%만)"}  |  익절폭 ${S.spacing}%  |  레버리지 ${S.leverage}배`;
+    `시간손절 ${S.time_stop ? S.time_stop + "h" : "없음 (가상손절 +" + S.stop_move.toFixed(0) + "%만)"}  |  익절폭 ${S.spacing}%  |  레버리지 ${S.leverage}배  |  ` +
+    `수수료 빗썸 ${S.fee_kr.toFixed(2)}% + 비트겟 ${S.fee_bg.toFixed(2)}% (왕복 ${((S.fee_kr + S.fee_bg) * 2).toFixed(2)}%)`;
   document.getElementById("period").textContent =
     `시작 ${kst(st.start)} KST · 경과 ${dur(st.now - st.start)} · 2주 판정 ${kst(st.judge)} 까지 ${dur(st.judge - st.now)}`;
 

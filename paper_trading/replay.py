@@ -51,7 +51,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 QUOTES_DIR = os.path.join(BASE, "real_trading", "logs", "quotes")
-FEE_RATE = 0.0018     # paper_trader._exit_slot 의 수수료 (업비트 0.05%×2 + 비트겟 0.04%×2)
+from paper_trading.paper_settings import PAPER_FEE_ROUND as FEE_RATE   # paper_trader._exit_slot 과 같은 왕복 수수료율
 
 
 # ── 모의매매 코드를 재생용으로 불러오기 ───────────────────────────────
