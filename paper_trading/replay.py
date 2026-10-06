@@ -236,11 +236,11 @@ def run_variant(pt, trades: list, coins_cfg: dict, snaps: list,
 # ── 요약·대조 ────────────────────────────────────────────────────────
 
 def _reason(r: dict, time_stop_h: float) -> str:
-    if r.get("reason"):                          # 개선안은 청산 사유를 기록에 남긴다
+    if r.get("reason"):                          # 2026-10-06~ 기록은 청산 사유를 남긴다
         return r["reason"]
     if float(r["exit_premium"]) >= float(r["target_premium"]) - 1e-9:
         return "익절"
-    if float(r["hold_hours"]) >= time_stop_h - 0.02:
+    if time_stop_h and float(r["hold_hours"]) >= time_stop_h - 0.02:
         return "시간손절"
     return "가상손절"
 
@@ -361,7 +361,6 @@ def main() -> int:
             return 1
         if tstop is not None:
             pt.TIME_STOP_HOURS = tstop
-        history_h = va.history_hours([args.variant])
     else:
         # 설정: 기본은 모의매매 설정 그대로, 주어진 값만 덮어쓴다
         coins_cfg = {c: dict(cfg) for c, cfg in pt.COINS.items()
@@ -380,6 +379,9 @@ def main() -> int:
             grid_cls = getattr(importlib.import_module(mod), cls)
     if args.time_stop is not None:
         pt.TIME_STOP_HOURS = args.time_stop
+    # 진입 필터가 켜진 설정이면 시작 전 창 길이만큼 기록을 미리 흘린다 (서버도 시작할 때 호가 기록으로 채운다)
+    history_h = max((float(c.get("window", 24)) for c in coins_cfg.values() if c.get("entry_q") is not None),
+                    default=0.0)
 
     actual = []
     if args.compare:
@@ -407,7 +409,8 @@ def main() -> int:
     print(f"  리플레이 — {datetime.fromtimestamp(t0, timezone.utc):%m-%d %H:%M} ~ "
           f"{datetime.fromtimestamp(t1, timezone.utc):%m-%d %H:%M} UTC ({(t1-t0)/3600:.1f}시간, 시점 {len(snaps):,}개)")
     print(f"  설정: {grid_cls.__name__}, 코인 {len(coins_cfg)}개, spacing {c0['spacing']}%, "
-          f"슬롯 {c0['n_slots']}개, 슬롯당 {c0['upbit_capital']/c0['n_slots']:,.0f}원, 시간손절 {ts_h}h")
+          f"슬롯 {c0['n_slots']}개, 슬롯당 {c0['upbit_capital']/c0['n_slots']:,.0f}원, "
+          f"시간손절 {f'{ts_h:g}h' if ts_h and ts_h != float('inf') else '없음'}")
     if args.variant:
         print(f"  개선안: {args.variant}  (코인 {'+'.join(coins_cfg)}, 레버리지 {c0['leverage']}배)")
     print("=" * 100)
@@ -454,7 +457,8 @@ def main() -> int:
 
     if args.save:
         with open(args.save, "w", newline="", encoding="utf-8") as f:
-            extra = [k for k in ("reason", "exit_fx") if res["trades"] and k in res["trades"][0]]
+            extra = [k for k in ("reason", "exit_fx") if k not in pt.TRADE_LOG_HEADER
+                     and res["trades"] and k in res["trades"][0]]
             w = csv.DictWriter(f, fieldnames=pt.TRADE_LOG_HEADER + extra)
             w.writeheader()
             w.writerows(res["trades"])

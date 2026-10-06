@@ -19,6 +19,15 @@
   - 펀딩비: 8시간당 0.01% 고정 → 비트겟이 주는 현재 펀딩비를 보유 시간만큼 누적.
   - 기록 파일: trades.csv(체결가 기준 기록, 그대로 보존) → trades_book.csv
 
+  2026-10-06: 1주 판정(CHANGELOG 8차) 후 전략 변경. 규칙은 설정(paper_settings)으로 켜고 끈다
+  - tp="entry": 익절 판단을 진입 때 은행 환율로 고정한 김프로 한다. 지금 환율로 다시 계산하면
+    가격은 그대로인데 환율만 내려도 익절 신호가 난다 (9/27~30 익절 235건 중 74건이 수수료 후 적자).
+  - entry_q=0.2, window=24: 진입김프가 최근 24시간 분포의 하위 20% 이하일 때만 진입.
+    시작할 때 호가 로거 기록(real_trading/logs/quotes)으로 24시간 분포를 미리 채운다.
+  - 시간손절 없음 (PAPER_TIME_STOP_HOURS = None). 손절은 가상손절만.
+  - 거래 기록에 청산 사유(reason)와 청산 때 은행 환율(exit_fx) 추가.
+  옵션을 모두 끄면(tp="exit", entry_q=None, 시간손절 24) 2026-09-26 버전과 똑같이 거래한다.
+
   한계: 최우선 호가 잔량보다 큰 주문이 다음 호가까지 먹는 추가 미끄러짐은 반영하지 않는다.
         슬롯이 200만원이면 일부 코인에서 비용이 과소평가되고, 실자본 규모(슬롯 약 33만원)면
         대부분 무시할 수 있다.
@@ -27,7 +36,8 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-import time, csv, logging, requests
+import time, csv, glob, gzip, bisect, logging, requests
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
@@ -37,9 +47,12 @@ from paper_trading.paper_settings import (
     PAPER_COINS as COINS,
     PAPER_POLL_INTERVAL as POLL_INTERVAL,
     PAPER_STOP_MARGIN_RATIO as STOP_MARGIN_RATIO,
+    PAPER_TIME_STOP_HOURS as TIME_STOP_HOURS,      # 이 시간 이상 보유 시 강제 청산. None = 시간손절 없음
 )
 
-TIME_STOP_HOURS = 24   # 24시간 이상 보유 시 강제 청산
+# 진입 필터를 시작할 때 미리 채울 호가 로거 기록
+QUOTES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "real_trading", "logs", "quotes")
 
 # ── 로그 설정 ─────────────────────────────────────────────────────
 os.makedirs(os.path.join(os.path.dirname(__file__), "logs"), exist_ok=True)
@@ -70,6 +83,8 @@ TRADE_LOG_HEADER = [
     # 중간가로 체결됐을 때 대비 호가를 넘느라 낸 비용. gross_pnl 에 이미 들어 있으므로
     # net_pnl 에서 다시 빼지 않는다. 체결가 기준 옛 기록과 비교할 때 쓴다.
     "spread_krw",
+    # 2026-10-06~: 익절 판단을 진입 환율로 하면 exit_premium(지금 환율) 만으로는 사유를 알 수 없다
+    "reason", "exit_fx",
 ]
 
 
@@ -114,6 +129,11 @@ class PaperCoinGrid:
         self.spacing = cfg["spacing"]
         self.cpg     = cfg["upbit_capital"] / cfg["n_slots"]
         self.slots   = [FloatingSlot() for _ in range(self.n_slots)]
+        # 2026-10-06 규칙. 설정에 없으면 꺼진다 (이전과 같이 거래)
+        self.tp_entry_fx = cfg.get("tp", "exit") == "entry"
+        self.entry_q     = cfg.get("entry_q")
+        self.window_s    = cfg.get("window", 24) * 3600
+        self._hist, self._sorted = deque(), []   # 진입 필터용 최근 진입김프 (시각순 / 크기순)
 
     def active_count(self) -> int:
         return sum(1 for s in self.slots if s.active)
@@ -130,9 +150,49 @@ class PaperCoinGrid:
             "up_bid": up_bid, "up_ask": up_ask,
             "bg_bid": bg_bid, "bg_ask": bg_ask,
             "funding": funding,
+            "fx": usd_krw,
             "entry_pct": _kimp(up_ask, bg_bid, usd_krw),   # 지금 진입하면 치르는 김프
             "exit_pct":  _kimp(up_bid, bg_ask, usd_krw),   # 지금 청산하면 받는 김프
         }
+
+    # ── 진입 필터 ──
+    def observe(self, t: float, prem: float):
+        """진입 필터 분포에 진입김프 하나를 넣고, 창 밖으로 나간 것은 뺀다."""
+        self._hist.append((t, prem))
+        bisect.insort(self._sorted, prem)
+        while self._hist[0][0] < t - self.window_s:
+            _, old = self._hist.popleft()
+            del self._sorted[bisect.bisect_left(self._sorted, old)]
+
+    def warm(self, up: dict, bg: dict, usd_krw: float):
+        """리플레이용: 시작 전 기록으로 진입 필터 분포만 채운다 (거래는 하지 않음)."""
+        if self.entry_q is None:
+            return
+        try:
+            q = PaperCoinGrid.quote(self, up, bg, usd_krw)
+        except ValueError:
+            return
+        self.observe(time.time(), q["entry_pct"])
+
+    def entry_threshold(self):
+        """진입 필터 경계 (최근 분포의 하위 entry_q 김프). 창의 25% 이상 쌓이기 전이면 None."""
+        if self.entry_q is None or not self._hist \
+                or self._hist[-1][0] - self._hist[0][0] < self.window_s * 0.25:
+            return None
+        return self._sorted[int(self.entry_q * (len(self._sorted) - 1))]
+
+    def _entry_ok(self, q: dict) -> bool:
+        if self.entry_q is None:
+            return True
+        th = self.entry_threshold()
+        return th is not None and q["entry_pct"] <= th
+
+    def _tp_kimp(self, slot: FloatingSlot, q: dict) -> float:
+        """익절 판단용 청산김프. tp="entry" 면 진입 때 환율로 다시 잰다 — 진입 뒤 환율 변화가 빠져
+        실제 손익(가격 비율)과 맞는다. tp="exit" 는 지금 환율 (이전 방식)."""
+        if self.tp_entry_fx:
+            return _kimp(q["up_bid"], q["bg_ask"], slot.entry_usd_krw)
+        return q["exit_pct"]
 
     def _can_enter(self, prem: float) -> bool:
         """기존 슬롯과 spacing/2 이내 중복 진입 방지"""
@@ -221,6 +281,8 @@ class PaperCoinGrid:
             "net_pnl":         round(net_pnl, 0),
             "capital_per_slot": self.cpg,
             "spread_krw":      round(spread_krw, 0),
+            "reason":          reason,
+            "exit_fx":         q["fx"],
         })
         icon = "◀" if reason == "익절" else "⏱"
         logger.info(
@@ -259,6 +321,8 @@ class PaperCoinGrid:
         try:
             q = self.quote(up, bg, usd_krw)
             self._accrue_funding(q)
+            if self.entry_q is not None:
+                self.observe(time.time(), q["entry_pct"])
             logger.info(
                 f"  [모의/{self.coin}] 김프 진입 {q['entry_pct']:+.2f}% / 청산 {q['exit_pct']:+.2f}%  "
                 f"활성 {self.active_count()}/{self.n_slots}슬롯"
@@ -266,22 +330,23 @@ class PaperCoinGrid:
 
             self._check_stoploss(q, upbit_usdt_krw, trade_counter_ref)
 
-            # 시간 손절 체크 (24시간 이상 보유 시 강제 청산)
-            for slot in list(self.slots):
-                if slot.active and (time.time() - slot.entry_time) / 3600 >= TIME_STOP_HOURS:
-                    trade_counter_ref[0] += 1
-                    self._exit_slot(slot, q, upbit_usdt_krw, trade_counter_ref[0], reason="시간손절")
+            # 시간 손절 체크 (TIME_STOP_HOURS 이상 보유 시 강제 청산, None 이면 안 함)
+            if TIME_STOP_HOURS:
+                for slot in list(self.slots):
+                    if slot.active and (time.time() - slot.entry_time) / 3600 >= TIME_STOP_HOURS:
+                        trade_counter_ref[0] += 1
+                        self._exit_slot(slot, q, upbit_usdt_krw, trade_counter_ref[0], reason="시간손절")
 
-            # 익절 체크 — 지금 청산하면 받는 김프가 목표에 닿았을 때
+            # 익절 체크 — 지금 청산하면 받는 김프(tp="entry" 면 진입 환율로 잰 값)가 목표에 닿았을 때
             for slot in self.slots:
-                if slot.active and q["exit_pct"] >= slot.target_premium:
+                if slot.active and self._tp_kimp(slot, q) >= slot.target_premium:
                     trade_counter_ref[0] += 1
                     self._exit_slot(slot, q, upbit_usdt_krw, trade_counter_ref[0], reason="익절")
 
-            # 진입 체크 (빈 슬롯 즉시 채우기)
+            # 진입 체크 (빈 슬롯 채우기 — 진입 필터를 켜면 김프가 최근 분포 하위일 때만)
             for slot in self.slots:
                 if not slot.active and self.active_count() < self.n_slots:
-                    if self._can_enter(q["entry_pct"]):
+                    if self._can_enter(q["entry_pct"]) and self._entry_ok(q):
                         self._enter_slot(slot, q, usd_krw)
 
         except Exception as e:
@@ -295,6 +360,48 @@ class PaperTrader:
         self._trade_counter = [self._load_counter()]
         self._markets       = [cfg["upbit_market"] for cfg in COINS.values()] + ["KRW-USDT"]
         self._pool          = ThreadPoolExecutor(max_workers=2)
+        self._warm_filters()
+
+    def _warm_filters(self, qdir: str = None):
+        """진입 필터는 최근 24시간 분포가 있어야 판단한다. 재시작할 때마다 6시간 넘게 진입을 못 하지 않도록
+        호가 로거 기록(같은 dunamu 환율, 같은 호가)으로 미리 채운다. 기록이 없으면 쌓일 때까지 기다린다."""
+        grids = {c: g for c, g in self.grids.items() if g.entry_q is not None}
+        if not grids:
+            return
+        qdir = qdir or QUOTES_DIR
+        now = time.time()
+        cutoff = now - max(g.window_s for g in grids.values())
+        day0 = datetime.fromtimestamp(cutoff, tz=timezone.utc).strftime("%Y%m%d")
+        files = sorted(f for f in glob.glob(os.path.join(qdir, "quotes_*.csv*"))
+                       if os.path.basename(f)[7:15] >= day0 and "_v" not in os.path.basename(f))
+        n = 0
+        try:
+            for f in files:
+                with (gzip.open(f, "rt", encoding="utf-8") if f.endswith(".gz")
+                      else open(f, encoding="utf-8")) as fh:
+                    for r in csv.DictReader(fh):
+                        g = grids.get(r.get("coin"))
+                        if g is None:
+                            continue
+                        try:
+                            t = datetime.strptime(r["ts"], "%Y-%m-%dT%H:%M:%S.%fZ") \
+                                        .replace(tzinfo=timezone.utc).timestamp()
+                            if t < now - g.window_s:
+                                continue
+                            g.observe(t, _kimp(float(r["up_ask"]), float(r["bg_bid"]), float(r["fx"])))
+                            n += 1
+                        except (ValueError, KeyError, TypeError):
+                            continue
+        except Exception as e:
+            logger.warning(f"[진입 필터] 호가 기록으로 미리 채우기 실패 — 직접 쌓일 때까지 기다림: {e}")
+            return
+        for c, g in grids.items():
+            th = g.entry_threshold()
+            span = (g._hist[-1][0] - g._hist[0][0]) / 3600 if g._hist else 0.0
+            state = f"경계 {th:+.3f}%" if th is not None else "판단 보류 (기록 부족)"
+            logger.info(f"[진입 필터] {c} 호가 기록 {len(g._hist):,}개, {span:.1f}시간으로 채움 → {state}")
+        if not n:
+            logger.warning(f"[진입 필터] {qdir} 에 최근 기록이 없음 — 직접 쌓일 때까지 진입하지 않음")
 
     def _load_counter(self) -> int:
         if not os.path.exists(TRADE_LOG):
@@ -318,6 +425,11 @@ class PaperTrader:
             f"spacing={first_cfg['spacing']}%  슬롯={first_cfg['n_slots']}개/코인  "
             f"슬롯당 {first_cfg['upbit_capital']//first_cfg['n_slots']//10000}만원"
         )
+        tp = "진입 환율 고정" if first_cfg.get("tp") == "entry" else "지금 환율"
+        q = first_cfg.get("entry_q")
+        filt = f"{first_cfg.get('window', 24)}h 하위 {q * 100:.0f}%" if q is not None else "없음"
+        stop = f"{TIME_STOP_HOURS}h" if TIME_STOP_HOURS else "없음 (가상손절만)"
+        logger.info(f"익절 판단 {tp}  |  진입 필터 {filt}  |  시간손절 {stop}")
         logger.info(f"폴링 {POLL_INTERVAL}초  |  거래 로그: {TRADE_LOG}")
         logger.info("-" * 60)
 

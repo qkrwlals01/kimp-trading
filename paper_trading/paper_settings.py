@@ -5,11 +5,11 @@
 
 # ── 가상 자본 구조 ────────────────────────────────────────────────
 # 총 시드: 1천만원 (실제 투입 예정 규모에 맞춤, 2026-09-27~)
-#   업비트  8,333,333원 → 코인당 833,333원 (10등분) → 슬롯당 약 16.7만원
-#   비트겟  1,666,667원 → 코인당 166,667원
+#   업비트  8,333,333원 → 코인당 2,777,777원 (3등분) → 슬롯당 약 55.6만원
+#   비트겟  1,666,667원 → 코인당 555,555원
 #
 # 레버리지 5배 (완전 헤지):
-#   비트겟 명목가치 = 166,667 × 5 = 833,333원 = 업비트 현물
+#   비트겟 명목가치 = 555,555 × 5 = 2,777,777원 = 업비트 현물
 #   → 총 시드를 업비트 : 비트겟 = 5 : 1 로 나눈다
 #   손절 기준: 비트겟 가격 +16% 시 마진비율 20% 도달 (1 - 0.16×5 = 0.20)
 #
@@ -34,10 +34,13 @@
 #
 # 2026-09-27 | 가상 자본 1억2천만 → 1천만 (실자본 규모). 전략 설정은 그대로.
 #   함께 paper_trader 를 체결가 → 호가 기준으로 전환 (CHANGELOG 6차)
+# 2026-10-06 | 1주 판정(CHANGELOG 8차)에서 현행 실패 → 전략·코인 변경 (CHANGELOG 9차)
+#   익절 판단 진입 환율 고정 + 진입 필터(24h 하위 20%) + 시간손절 없음(가상손절만), 투입 상한 없음
+#   코인 10개 → XRP·SUI·LINK: 시간손절이 없으면 김프가 자주 출렁여 익절이 잦은 코인이 맞다
 
 PAPER_TOTAL_KRW = 10_000_000   # 총 시드
 _LEVERAGE       = 5
-_N_COINS        = 10           # 운영 코인 수
+_N_COINS        = 3            # 운영 코인 수
 
 # 완전 헤지: 업비트 현물 = 비트겟 증거금 × 레버리지 → 업비트 몫 = 총액 × L/(L+1)
 PAPER_UPBIT_KRW  = PAPER_TOTAL_KRW * _LEVERAGE // (_LEVERAGE + 1)
@@ -51,23 +54,21 @@ _COIN = lambda market, symbol, currency: {
     "leverage":      _LEVERAGE,
     "n_slots":       5,           # 동시 최대 보유 슬롯
     "spacing":       0.3,         # 익절 간격 (%) — 시간손절 도입으로 0.3%로 상향
+    # 2026-10-06 규칙 (paper_trader.PaperCoinGrid). 빼면 이전처럼 거래한다
+    "tp":            "entry",     # 익절 판단: 진입 때 은행 환율로 고정한 김프 ("exit" = 지금 환율, 이전 방식)
+    "entry_q":       0.2,         # 진입 필터: 진입김프가 최근 window 시간 분포의 하위 20% 이하일 때만 (None = 끔)
+    "window":        24,          # 진입 필터 창(시간)
 }
 
-# 7월 모의매매 운영 코인 그대로. 이 중 상당수는 호가 비용이 순마진을 넘는다 (CHANGELOG 6차).
-# 호가 로그 7일치가 쌓이면(2026-10-03경) real_trading/coin_selector 판정으로 다시 고른다.
+# 2026-10-06 코인 선정 (CHANGELOG 9차). 9일 재생에서 세 코인 모두 앞·뒤 기간 흑자.
+# 비용(즉시왕복 호가비용 중앙값): XRP 0.056%, LINK 0.110%, SUI 0.124% (순마진 0.12% 경계)
+# 7일 안에 +16% 오를 확률(3년 일봉): XRP 12.5%, LINK 17.5%, SUI 26.2% → 가상손절이 가끔 날 수 있음
 PAPER_COINS = {
-    "SOL":  _COIN("KRW-SOL",  "SOLUSDT",  "SOL"),
-    "AVAX": _COIN("KRW-AVAX", "AVAXUSDT", "AVAX"),
-    "LINK": _COIN("KRW-LINK", "LINKUSDT", "LINK"),
-    "BCH":  _COIN("KRW-BCH",  "BCHUSDT",  "BCH"),
+    "XRP":  _COIN("KRW-XRP",  "XRPUSDT",  "XRP"),
     "SUI":  _COIN("KRW-SUI",  "SUIUSDT",  "SUI"),
-    "UNI":  _COIN("KRW-UNI",  "UNIUSDT",  "UNI"),
-    "TAO":  _COIN("KRW-TAO",  "TAOUSDT",  "TAO"),
-    # 07월 교체 편입 (BTC→BSV, XRP→AAVE, ETH→ATOM) — 체결가 착시로 고른 코인
-    "BSV":  _COIN("KRW-BSV",  "BSVUSDT",  "BSV"),
-    "AAVE": _COIN("KRW-AAVE", "AAVEUSDT", "AAVE"),
-    "ATOM": _COIN("KRW-ATOM", "ATOMUSDT", "ATOM"),
+    "LINK": _COIN("KRW-LINK", "LINKUSDT", "LINK"),
 }
 
 PAPER_STOP_MARGIN_RATIO = 0.20   # 마진비율 20% 이하 → 가상 손절 (레버리지 5배면 가격 +16% 상당)
+PAPER_TIME_STOP_HOURS   = None   # 시간손절 (None = 없음, 2026-10-06~). 이전 24시간
 PAPER_POLL_INTERVAL     = 10     # 폴링 주기 (초)

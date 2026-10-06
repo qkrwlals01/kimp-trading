@@ -329,7 +329,7 @@ def main() -> int:
         need = dict(coins_cfg)
         for _, cfg, *_ in builds:
             need.update({c: v for c, v in cfg.items() if c not in need})
-        pre = va.history_hours([spec for _, spec in specs]) * 3600
+        pre = va.history_hours([spec for _, spec in specs], coins_cfg) * 3600
         snaps, _ = rp.load_snapshots(qdir, need, start - pre, end)
         history = [x for x in snaps if x[0] < start]
         snaps = snaps[len(history):]
@@ -371,7 +371,7 @@ def main() -> int:
             print(f"  ⚠ 미청산 {approx}개는 진입 로그에 수량이 없어 김프 차이로 근사함 (환율 변화만큼 틀림)")
         if unmatched:
             print(f"  ⚠ 청산 기록 {unmatched}건이 진입 로그와 짝지어지지 않음 — 미청산 복원이 부정확할 수 있음")
-        stale = sum(1 for o in open_real.values() for h in o[3] if h > ts_h + 0.1)
+        stale = sum(1 for o in open_real.values() for h in o[3] if ts_h and h > ts_h + 0.1)
         if stale:
             print(f"  ⚠ 미청산 중 {stale}개가 시간손절({ts_h:g}h)보다 오래 열려 있음 — 이미 청산된 슬롯이 남았을 가능성")
         tot = mr["total"]
@@ -397,7 +397,7 @@ def main() -> int:
         print("  일별 실현 (KST): " + "  ".join(f"{d:%m/%d} {v:+,.0f}" for d, v in sorted(mr["per_day"].items())))
 
         # [2] 재생 대조 — 서버와 같은 코드(PaperCoinGrid)로
-        base = rp.run_variant(pt, trades, coins_cfg, snaps)
+        base = rp.run_variant(pt, trades, coins_cfg, snaps, history=history)
         sim = rp.summarize(base["trades"], ts_h)
         ms = row_metrics(sim, base["open"], base["trades"], base["fx_pnl"], base["krw_avg"])
         m = rp.match_trades(closed, base["trades"])
