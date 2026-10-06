@@ -426,7 +426,8 @@ function render() {
   document.getElementById("strategy").textContent =
     `${S.coins.join(" · ")}  |  익절 판단 ${S.tp === "entry" ? "진입 환율 고정" : "지금 환율"}  |  진입 ${S.window}h 하위 ${Math.round((S.entry_q || 0) * 100)}%  |  ` +
     `시간손절 ${S.time_stop ? S.time_stop + "h" : "없음 (가상손절 +" + S.stop_move.toFixed(0) + "%만)"}  |  익절폭 ${S.spacing}%  |  레버리지 ${S.leverage}배  |  ` +
-    `수수료 빗썸 ${S.fee_kr.toFixed(2)}% + 비트겟 ${S.fee_bg.toFixed(2)}% (왕복 ${((S.fee_kr + S.fee_bg) * 2).toFixed(2)}%)`;
+    `수수료 빗썸 ${S.fee_kr.toFixed(2)}% + 비트겟 ${S.fee_bg.toFixed(2)}%` +
+    (S.bg_rebate ? ` (수수료 ${S.bg_rebate.toFixed(0)}% 환급 반영)` : "") + ` · 왕복 ${((S.fee_kr + S.fee_bg) * 2).toFixed(2)}%`;
   document.getElementById("period").textContent =
     `시작 ${kst(st.start)} KST · 경과 ${dur(st.now - st.start)} · 2주 판정 ${kst(st.judge)} 까지 ${dur(st.judge - st.now)}`;
 

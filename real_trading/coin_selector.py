@@ -24,7 +24,7 @@
          계산돼 있어서, 차이를 그대로 쓰면 환율 변화가 손익처럼 섞인다 (2026-09-30 발견.
          모의매매 청산 301건에서 실제 손익과의 상관: 진입 환율 고정 0.999, 그 시점 환율 0.90 —
          뒤쪽 오차는 환율 변화와 상관 −0.86 으로, 거의 환율 변화 그 자체였다)
-   비용: 수수료(시장가 0.16%, 지정가 0.12% — paper_settings 의 한국 거래소 수수료 기준) + 보유 중 펀딩비(양수면 숏이 수취)
+   비용: 수수료(paper_settings 기준 왕복: 시장가 0.14%, 지정가 0.10%) + 보유 중 펀딩비(양수면 숏이 수취)
    --maker 는 양쪽 모두 중간가에 체결된다고 본다. 스프레드를 내지도 벌지도 않는
    중립 가정이며, 실제 지정가는 미체결·역선택이 있어 이보다 나쁠 수 있다.
    지정가여도 호가 비용 탈락 조건은 그대로 적용한다 (한쪽 체결 시 시장가 보정 비용).
@@ -53,9 +53,9 @@ QUOTES_DIR = os.path.join(BASE, "logs", "quotes")
 SELECT_DIR = os.path.join(BASE, "logs", "selection")
 
 sys.path.insert(0, os.path.dirname(BASE))
-from paper_trading.paper_settings import PAPER_FEE_KR, PAPER_FEE_BG     # noqa: E402
-FEE_MARKET = (PAPER_FEE_KR + PAPER_FEE_BG) * 2 * 100     # 한국 거래소 ×2 + 비트겟 taker ×2 (%) — 빗썸 할인 요율 기준 0.16
-FEE_MAKER = (PAPER_FEE_KR + 0.0002) * 2 * 100            # 한국 거래소 ×2 + 비트겟 maker 0.02% ×2 (%) — 0.12
+from paper_trading.paper_settings import PAPER_FEE_KR, PAPER_FEE_BG, PAPER_FEE_BG_MAKER   # noqa: E402
+FEE_MARKET = (PAPER_FEE_KR + PAPER_FEE_BG) * 2 * 100         # 한국 거래소 ×2 + 비트겟 테이커 실효 ×2 (%)
+FEE_MAKER = (PAPER_FEE_KR + PAPER_FEE_BG_MAKER) * 2 * 100    # 한국 거래소 ×2 + 비트겟 메이커 실효 ×2 (%)
 
 
 # ── 적재 ──────────────────────────────────────────────────────────

@@ -27,7 +27,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from paper_trading.paper_settings import (                       # 서버와 같은 설정 파일
     PAPER_COINS, PAPER_TOTAL_KRW, PAPER_STOP_MARGIN_RATIO, PAPER_TIME_STOP_HOURS,
-    PAPER_FEE_ROUND as FEE_RATE, PAPER_FEE_KR, PAPER_FEE_BG,
+    PAPER_FEE_ROUND as FEE_RATE, PAPER_FEE_KR, PAPER_FEE_BG, PAPER_BG_REBATE,
 )
 
 HOST = "<USER>@<SERVER>"
@@ -418,7 +418,8 @@ def compute(store: Store) -> dict:
         "bot_t": bot_t, "quote_t": max((cd.get("t", 0) for cd in coins.values()), default=0),
         "strategy": {"coins": list(PAPER_COINS), "spacing": spacing, "entry_q": q_lo, "window": win_h,
                      "tp": cfg0.get("tp", "exit"), "time_stop": PAPER_TIME_STOP_HOURS, "leverage": lev,
-                     "stop_move": stop_move * 100, "fee_kr": PAPER_FEE_KR * 100, "fee_bg": PAPER_FEE_BG * 100},
+                     "stop_move": stop_move * 100, "fee_kr": PAPER_FEE_KR * 100, "fee_bg": PAPER_FEE_BG * 100,
+                     "bg_rebate": PAPER_BG_REBATE * 100},
         "capital": PAPER_TOTAL_KRW, "realized": realized, "unreal": unreal_total, "total": realized + unreal_total,
         "n_closed": len(closed), "by_reason": dict(by_reason), "n_open": n_open, "open_krw": open_krw, "full": full,
         "fx": some.get("fx"), "usdt": some.get("usdt"), "fx_start": first_fx,
