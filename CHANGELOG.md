@@ -372,23 +372,31 @@ PaperCoinGrid 를 상속해 규칙만 바꾼다. 서버 코드는 그대로. 값
   PRESETS 를 새 현행 기준으로 다시 정함 (새 모의매매 시작 전): 시간손절 72h·24h, 상한 50%, 필터 끔, 익절 지금 환율,
   spacing 0.4, 코인 +BTC·ETH, BTC·ETH·XRP·SOL, 옛 현행
 
+### 서버 교체 (2026-10-06)
+- 08:19:56 UTC 옛 모의매매 중지 (청산 808건). 그때 열려 있던 슬롯은 메모리에만 있어 기록 없이 종료
+- 옛 기록 보관: 서버 `paper_trading/logs/trades_book_20260927_v1.csv`, `trading_20260927_v1.log.gz` (360MB → 23MB),
+  맥 `reports/data/trades_book_20260927_v1.csv`, `paper_events_20260927_v1.log`. 옛 코드는 `paper_trading/_backup_20261006/`
+- **08:20:36 UTC (17:20 KST) 새 전략으로 가동**. 진입 필터를 호가 기록 24.0시간으로 채움
+  (경계 XRP +0.584%, SUI +0.679%, LINK +0.731%). 오류·재시작 없음. 호가 로거는 그대로 (재시작 안 함)
+
 ---
 
 ## 다음 할 일
-- 서버 모의매매를 새 전략으로 교체 (사용자 확인 후). 옛 기록은 `trades_book_20260927_v1.csv`, `trading_20260927_v1.log.gz` 로 보관
-- 교체 후 2주 모의매매 → `python tools/weekly_report.py --days 14` 로 판정 (기준은 8차와 같음)
+- **2026-10-20 17:20 KST 이후**: 새 전략 2주 판정 `python tools/weekly_report.py --days 14` (기준은 8차와 같음).
+  그 전에는 서버 모의매매 코드·설정 변경과 재시작 금지 (열린 슬롯이 메모리에만 있음)
 - 실거래로 간다면: 지정가 소액 시험(사용자 직접), 비트겟 증거금 여유(투입 상한 대신), 신호용 환율 평활 (피드 튐)
 
 ---
 
 ## 서버 운영 정보
 - 주소: oracle cloud (<USER>@<SERVER>, <SERVER>), 키 `~/.ssh/<KEY_FILE>`
-- 모의매매: `sudo systemctl [start|stop|status] kimp` — 2026-09-27 부터 호가 기준으로 가동 중
+- 모의매매: `sudo systemctl [start|stop|status] kimp` — 2026-10-06 08:20 UTC 부터 9차 전략(XRP·SUI·LINK)으로 가동 중
 - 호가 로거: `sudo systemctl [start|stop|status] kimp-quotes` — 상시 가동
 - 실시간 로그: `sudo journalctl -u kimp -f` / `sudo journalctl -u kimp-quotes -f`
 - venv: `~/kimp_venv` (프로젝트 외부, Python 3.10)
 - 로그 파일
-  - `paper_trading/logs/trades_book.csv`: 호가 기준 거래 기록 (2026-09-26 이후)
+  - `paper_trading/logs/trades_book.csv`: 9차 전략 거래 기록 (2026-10-06 이후, `reason`·`exit_fx` 열 포함)
+  - `paper_trading/logs/trades_book_20260927_v1.csv`: 호가 기준 옛 전략 기록 (09-27 ~ 10-06)
   - `paper_trading/logs/trades.csv`: 체결가 기준 옛 기록 (~07-29, 보존)
   - `paper_trading/logs/trading.log`: 실시간 로그
   - `real_trading/logs/quotes/`: 호가 로그 (일별, 지난 날짜 gzip)
