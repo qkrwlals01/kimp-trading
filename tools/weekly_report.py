@@ -27,6 +27,7 @@
 실행:
       python tools/weekly_report.py                         # 동기화 후 리포트 (개선안 묶음 포함)
       python tools/weekly_report.py --no-sync               # 받아 둔 데이터로
+      python tools/weekly_report.py --days 7                # 시작부터 7일까지만 (그 시각 기준 미청산 평가)
       python tools/weekly_report.py --no-presets --variant "tp=entry,spacing=0.4" --variant "cap=0.3"
       python tools/weekly_report.py --min-coins 3 --max-coin-share 0.5 --max-day-share 0.5
 
@@ -110,9 +111,11 @@ def reconstruct_open(entries: list, closed: list, start: float) -> tuple:
         by_coin[e[1]].append(i)
     unmatched = 0
     for r in closed:
-        te, pe = rp._iso(r["entry_dt"]), round(float(r["entry_premium"]), 2)
+        # 로그 김프는 참값을 소수 둘째 자리로, 기록은 넷째 자리로 반올림한 값이라 둘의 차이는 0.00505 이하.
+        # 기록 값을 다시 둘째 자리로 반올림해 비교하면 0.2050 → 0.20 vs 로그 0.21 처럼 어긋난다
+        te, pe = rp._iso(r["entry_dt"]), float(r["entry_premium"])
         hit = next((i for i in by_coin[r["coin"]] if not used[i]
-                    and abs(ents[i][0] - te) <= 2 and abs(ents[i][2] - pe) <= 0.006), None)
+                    and abs(ents[i][0] - te) <= 2 and abs(ents[i][2] - pe) <= 0.0051), None)
         if hit is None:
             unmatched += 1
         else:
@@ -273,6 +276,8 @@ def main() -> int:
     ap.add_argument("--key", default=KEY)
     ap.add_argument("--data", default=DATA, help="받아 둘 폴더")
     ap.add_argument("--start", default=None, help="분석 시작 (기본: 마지막 모의매매 시작 시각)")
+    ap.add_argument("--end", default=None, help="분석 끝 (예: 2026-10-04T07:00:59Z, 기본: 마지막 호가)")
+    ap.add_argument("--days", type=float, default=None, help="시작부터 며칠까지만 볼지 (--end 대신, 예: 7)")
     ap.add_argument("--variant", action="append", default=[],
                     help="비교할 개선안 설정 문자열 (여러 번 가능, paper_trading/variants.py 참고)")
     ap.add_argument("--no-presets", action="store_true", help="기본 개선안 묶음(variants.PRESETS)을 빼고 비교")
@@ -306,15 +311,26 @@ def main() -> int:
         else:
             print("모의매매 시작 기록을 찾지 못했습니다. --start 로 지정하세요.")
             return 1
+        # 끝을 자르면 그 시각 기준으로 다시 본다: 그때까지 청산된 거래만 실현, 그 뒤 청산된 거래는
+        # 그 시각에 열려 있던 슬롯으로 복원돼 그 시각 호가로 평가된다
+        if a.end:
+            end = datetime.fromisoformat(a.end.replace("Z", "+00:00")).timestamp()
+        elif a.days:
+            end = start + a.days * 86400
+        else:
+            end = None
         with open(os.path.join(a.data, "trades_book.csv"), encoding="utf-8") as f:
-            closed = [r for r in csv.DictReader(f) if rp._iso(r["entry_dt"]) >= start]
+            closed = [r for r in csv.DictReader(f) if rp._iso(r["entry_dt"]) >= start
+                      and (end is None or rp._iso(r["exit_dt"]) <= end)]
+        if end is not None:
+            entries = [e for e in entries if e[0] <= end]
 
         # 모든 설정이 쓰는 코인의 호가를 한 번에 읽는다. 진입 필터가 있으면 시작 전 기록도 함께
         need = dict(coins_cfg)
         for _, cfg, *_ in builds:
             need.update({c: v for c, v in cfg.items() if c not in need})
         pre = va.history_hours([spec for _, spec in specs]) * 3600
-        snaps, _ = rp.load_snapshots(qdir, need, start - pre, None)
+        snaps, _ = rp.load_snapshots(qdir, need, start - pre, end)
         history = [x for x in snaps if x[0] < start]
         snaps = snaps[len(history):]
         if not snaps:
@@ -330,10 +346,10 @@ def main() -> int:
         print("=" * W)
         print(f"  판정 리포트 — 작성 {datetime.now(KST):%Y-%m-%d %H:%M} KST")
         print("=" * W)
-        print(f"  모의매매 시작 {_kst(start)} KST → 마지막 호가 {_kst(t1)} KST  ({days:.2f}일)")
+        print(f"  모의매매 시작 {_kst(start)} KST → {'분석 끝' if end else '마지막 호가'} {_kst(t1)} KST  ({days:.2f}일)")
         cover = len(snaps) / ((t1 - t0) / 10 + 1) * 100
         print(f"  호가 수집률 {cover:.1f}% (시점 {len(snaps):,}개)")
-        later = [s for s in starts if s > start]
+        later = [s for s in starts if s > start and (end is None or s <= end)]
         if later:
             print(f"  ⚠ 분석 구간 안에서 모의매매가 {len(later)}번 재시작됨 — 그때 열려 있던 슬롯은 기록 없이 사라졌을 수 있음")
 
@@ -355,6 +371,9 @@ def main() -> int:
             print(f"  ⚠ 미청산 {approx}개는 진입 로그에 수량이 없어 김프 차이로 근사함 (환율 변화만큼 틀림)")
         if unmatched:
             print(f"  ⚠ 청산 기록 {unmatched}건이 진입 로그와 짝지어지지 않음 — 미청산 복원이 부정확할 수 있음")
+        stale = sum(1 for o in open_real.values() for h in o[3] if h > ts_h + 0.1)
+        if stale:
+            print(f"  ⚠ 미청산 중 {stale}개가 시간손절({ts_h:g}h)보다 오래 열려 있음 — 이미 청산된 슬롯이 남았을 가능성")
         tot = mr["total"]
         # 짧은 기간을 30일로 늘리면 수십 % 가 찍혀 오해를 부른다 → 3일 이상일 때만
         monthly = (f"  (30일 환산 {tot/PAPER_TOTAL_KRW*100/days*30:+.2f}%)" if days >= 3 else "")
@@ -455,14 +474,22 @@ def main() -> int:
         print(f"[5] 코인 선정 — 최근 {a.selector_days}일 호가 (real_trading/coin_selector)")
         sa = cs.parse_args([])
         sa.dir, sa.days, sa.no_save = qdir, a.selector_days, True
-        data, files = cs.load(sa.dir, sa.days)
+        if end is None:
+            data, files = cs.load(sa.dir, sa.days)
+        else:   # 끝을 잘랐으면 그 시각까지 selector-days 일치만
+            back = sa.days + int((datetime.now(timezone.utc).timestamp() - end) / 86400) + 1
+            data, files = cs.load(sa.dir, back)
+            lo = end - sa.days * 86400
+            data = {c: [r for r in rows if lo <= r[0] <= end] for c, rows in data.items()}
+            data = {c: rows for c, rows in data.items() if rows}
         if data:
             t_a = min(r[0][0] for r in data.values() if r)
             t_b = max(r[-1][0] for r in data.values() if r)
             cs.report(cs.evaluate(data, sa), sa, files, (t_b - t_a) / 3600)
 
     os.makedirs(REPORTS, exist_ok=True)
-    out = os.path.join(REPORTS, f"report_{datetime.now(KST):%Y%m%d_%H%M}.txt")
+    cut = f"_to{datetime.fromtimestamp(end, KST):%m%d%H%M}" if end else ""
+    out = os.path.join(REPORTS, f"report_{datetime.now(KST):%Y%m%d_%H%M}{cut}.txt")
     with open(out, "w", encoding="utf-8") as f:
         f.write(tee.getvalue())
     print(f"\n저장: {out}")
