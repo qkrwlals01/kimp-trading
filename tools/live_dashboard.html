@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>김프 모의매매 실시간</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7; --ring: rgba(11,11,11,.10);
+  --s1: #2a78d6; --s1-wash: rgba(42,120,214,.10);
+  --good: #0ca30c; --bad: #d03b3b; --warn: #fab219;
+  --up: #006300; --down: #c62f2f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+    --s1: #3987e5; --s1-wash: rgba(57,135,229,.12);
+    --up: #0ca30c; --down: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #ffffff; --ink2: #c3c2b7; --muted: #898781;
+  --grid: #2c2c2a; --axis: #383835; --ring: rgba(255,255,255,.10);
+  --s1: #3987e5; --s1-wash: rgba(57,135,229,.12);
+  --up: #0ca30c; --down: #e66767;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+main { max-width: 1440px; margin: 0 auto; padding: 20px 16px 40px; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; }
+h2 { font-size: 15px; margin: 0; font-weight: 650; }
+.sub { color: var(--ink2); margin: 4px 0 0; font-size: 13px; }
+.top { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-start; justify-content: space-between; margin-bottom: 16px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px;
+        background: var(--surface); box-shadow: 0 0 0 1px var(--ring); font-size: 12.5px; color: var(--ink2); white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.good { background: var(--good); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+button.theme { font: inherit; font-size: 12.5px; color: var(--ink2); background: var(--surface); border: 0;
+               box-shadow: 0 0 0 1px var(--ring); border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+.card { background: var(--surface); border-radius: 10px; box-shadow: 0 0 0 1px var(--ring); padding: 16px; min-width: 0; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.tile .label { color: var(--ink2); font-size: 12.5px; }
+.tile .value { font-size: clamp(22px, 2.4vw, 28px); font-weight: 650; margin-top: 2px; letter-spacing: -0.01em; white-space: nowrap; }
+.tile.hero .value { font-size: clamp(26px, 3.2vw, 40px); }
+.tile .detail { color: var(--ink2); font-size: 12.5px; margin-top: 2px; }
+.pos { color: var(--up); } .neg { color: var(--down); }
+.coins { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.coin-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.state { font-size: 12.5px; color: var(--ink2); display: inline-flex; align-items: center; gap: 6px; }
+.nums { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 12px 0 8px; }
+.nums div { min-width: 0; }
+.nums dt { color: var(--ink2); font-size: 12px; }
+.nums dd { margin: 0; font-size: 17px; font-weight: 600; }
+.chart { position: relative; width: 100%; }
+.chart svg { display: block; width: 100%; overflow: visible; }
+.chart text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); color: var(--ink);
+       box-shadow: 0 0 0 1px var(--ring), 0 4px 14px rgba(0,0,0,.12); border-radius: 8px; padding: 6px 9px;
+       font-size: 12px; white-space: nowrap; display: none; z-index: 2; }
+.tip .t { color: var(--ink2); margin-bottom: 2px; }
+.tip .row { display: flex; align-items: center; gap: 6px; }
+.tip .row b { font-variant-numeric: tabular-nums; }
+.tip .row span { color: var(--ink2); }
+.key { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--ink2); font-size: 12px; margin: 6px 0 4px; }
+.key i { display: inline-block; vertical-align: middle; margin-right: 5px; }
+.k-line { width: 14px; height: 2px; background: var(--s1); border-radius: 1px; }
+.k-dash { width: 14px; height: 0; border-top: 2px dashed var(--muted); }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; color: var(--ink2); font-weight: 500; padding: 6px 6px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+td { padding: 6px 6px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th.r, td.r { text-align: right; }
+.empty { color: var(--muted); font-size: 12.5px; padding: 10px 0 2px; }
+.sub2 { color: var(--ink2); font-size: 11.5px; margin-top: 1px; }
+table.slots td { vertical-align: top; }
+.tbl-wrap { overflow-x: auto; margin-top: 10px; }
+.coin-foot { display: flex; gap: 16px; flex-wrap: wrap; color: var(--ink2); font-size: 12.5px; margin-top: 10px; }
+.row2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 900px) { .row2 { grid-template-columns: 1fr; } .nums { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 420px) { .coins { grid-template-columns: 1fr; } }
+.alert { margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; background: var(--surface);
+         box-shadow: 0 0 0 1px var(--ring); font-size: 13px; display: none; gap: 8px; align-items: flex-start; }
+.meter { position: relative; height: 6px; border-radius: 3px; background: var(--grid); width: 48px; display: inline-block; vertical-align: middle; margin-right: 6px; }
+.meter > i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--s1); }
+.meter.warn > i { background: var(--warn); } .meter.bad > i { background: var(--bad); }
+footer { color: var(--muted); font-size: 12px; margin-top: 16px; line-height: 1.6; }
+.stale { opacity: .55; transition: opacity .2s; }
+</style>
+</head>
+<body>
+<main id="app">
+  <div class="top">
+    <div>
+      <h1>김프 모의매매 · 실시간</h1>
+      <p class="sub" id="strategy">서버에서 처음 데이터를 받는 중… (최대 10초)</p>
+      <p class="sub" id="period"></p>
+    </div>
+    <div class="chips">
+      <span class="chip" id="chip-bot"><span class="dot"></span>모의매매</span>
+      <span class="chip" id="chip-log"><span class="dot"></span>호가 로거</span>
+      <span class="chip" id="chip-sync"><span class="dot"></span>연결</span>
+      <button class="theme" id="theme" type="button">테마: 자동</button>
+    </div>
+  </div>
+  <div class="alert" id="alert"></div>
+
+  <section class="kpis" aria-label="핵심 숫자">
+    <div class="card tile hero"><div class="label">총손익 (실현 + 미청산 평가)</div><div class="value" id="k-total">—</div><div class="detail" id="k-total-d"></div></div>
+    <div class="card tile"><div class="label">청산</div><div class="value" id="k-closed">—</div><div class="detail" id="k-closed-d"></div></div>
+    <div class="card tile"><div class="label">열린 슬롯</div><div class="value" id="k-open">—</div><div class="detail" id="k-open-d"></div></div>
+    <div class="card tile"><div class="label">은행 환율 (dunamu)</div><div class="value" id="k-fx">—</div><div class="detail" id="k-fx-d"></div></div>
+  </section>
+
+  <section class="coins" id="coins" aria-label="코인별 상태"></section>
+
+  <section class="row2">
+    <div class="card">
+      <h2>누적 손익</h2>
+      <p class="sub">실현 손익의 누적과, 끝점은 지금 미청산 평가까지 더한 총손익</p>
+      <div class="chart" id="equity"></div>
+    </div>
+    <div class="card">
+      <h2>최근 청산</h2>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>청산 시각</th><th>코인</th><th>사유</th><th class="r">보유</th><th class="r">진입 김프</th><th class="r">순손익</th></tr></thead>
+          <tbody id="recent"></tbody>
+        </table>
+      </div>
+      <div class="empty" id="recent-empty">아직 청산이 없습니다.</div>
+    </div>
+  </section>
+
+  <footer>
+    서버에 아무것도 설치하지 않고 10초마다 SSH 로 기록을 읽기만 합니다 (tools/live_dashboard.py). 이 화면은 이 맥에서만 열립니다.<br>
+    미청산 평가 = 지금 청산하면 받을 금액 (업비트 매수호가·비트겟 매도호가·업비트 USDT, 수수료 0.18%, 펀딩 추정 포함). 열린 슬롯은 진입 로그와 청산 기록을 맞춰 복원합니다.<br>
+    진입 경계는 호가 로그로 다시 계산한 최근 24시간 하위 20% 김프라서 봇 내부 값과 조금 다를 수 있습니다. "지금 청산김프"는 진입 때 환율로 잰 값으로, 봇이 익절을 판단하는 값입니다.<br>
+    김프가 몇 분 동안만 1%p 넘게 뚝 떨어진 자국은 대개 은행 환율 피드가 튄 것입니다 (예: 10/06 08:28 KST 1,342.5 → 1,358.5 → 1,342.0, 2분). 차트에 마우스를 올리면 그 시각 환율이 보입니다.
+  </footer>
+</main>
+
+<script>
+"use strict";
+const NS = "http://www.w3.org/2000/svg";
+const KST = 9 * 3600 * 1000;
+let state = null, lastRender = 0;
+
+// ── 형식 ──
+const won = v => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.round(v)).toLocaleString("ko-KR") + "원";
+const pct = (v, d = 2) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "%";
+const pp = (v, d = 2) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "%p";
+const num = (v, d = 0) => v == null ? "—" : v.toLocaleString("ko-KR", { minimumFractionDigits: d, maximumFractionDigits: d });
+const signCls = v => v > 0 ? "pos" : v < 0 ? "neg" : "";
+function kst(t, withDate = true) {
+  const d = new Date(t * 1000 + KST);
+  const p = n => String(n).padStart(2, "0");
+  const hm = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}`;
+  return withDate ? `${p(d.getUTCMonth() + 1)}/${p(d.getUTCDate())} ${hm}` : hm;
+}
+function dur(s) {
+  s = Math.max(0, s);
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}일 ${h}시간` : h ? `${h}시간 ${m}분` : `${m}분`;
+}
+function ago(s) { return s < 60 ? `${Math.round(s)}초 전` : s < 3600 ? `${Math.round(s / 60)}분 전` : `${(s / 3600).toFixed(1)}시간 전`; }
+function setText(id, text, cls) { const e = document.getElementById(id); e.textContent = text; if (cls !== undefined) e.className = e.className.replace(/\b(pos|neg)\b/g, "").trim() + (cls ? " " + cls : ""); }
+function h(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) k === "class" ? e.className = v : e.setAttribute(k, v);
+  for (const k of kids) e.append(k);
+  return e;
+}
+function s(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) e.setAttribute(k, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+// ── 테마 ──
+const themes = ["auto", "light", "dark"], themeName = { auto: "자동", light: "라이트", dark: "다크" };
+let theme = "auto";
+try { theme = localStorage.getItem("kimp-theme") || "auto"; } catch (e) {}
+function applyTheme() {
+  if (theme === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", theme);
+  document.getElementById("theme").textContent = "테마: " + themeName[theme];
+}
+document.getElementById("theme").onclick = () => {
+  theme = themes[(themes.indexOf(theme) + 1) % 3];
+  try { localStorage.setItem("kimp-theme", theme); } catch (e) {}
+  applyTheme(); render();
+};
+applyTheme();
+
+// ── 축 눈금 ──
+function niceStep(span, n) {
+  const raw = span / Math.max(n, 1), mag = Math.pow(10, Math.floor(Math.log10(raw))), f = raw / mag;
+  return (f >= 7.5 ? 10 : f >= 3.5 ? 5 : f >= 1.5 ? 2 : 1) * mag;
+}
+
+// ── 선 차트 (십자선 툴팁) ──
+// opt: {x0, x1, lines:[{pts:[[x,y]..], color, width, dash, step}], markers:[{x,y,shape,color,label}],
+//       yFmt, height, tip(x) -> {title, rows:[[swatchStyle, value, label]]}, zero:boolean, endLabel}
+function lineChart(host, opt) {
+  host.replaceChildren();
+  const W = Math.max(host.clientWidth, 280), H = opt.height || 190;
+  const m = { l: 46, r: 14, t: 10, b: 24 };
+  const pw = W - m.l - m.r, ph = H - m.t - m.b;
+  let ys = [];
+  for (const L of opt.lines) for (const p of L.pts) if (p[1] != null) ys.push(p[1]);
+  for (const k of opt.markers || []) ys.push(k.y);
+  if (opt.zero) ys.push(0);
+  if (!ys.length) { host.append(h("div", { class: "empty" }, "데이터를 기다리는 중")); return; }
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const minSpan = opt.minSpan || 1e-9;                       // 값이 거의 같을 때 눈금이 잘게 쪼개지지 않게
+  if (y1 - y0 < minSpan) { const mid = (y0 + y1) / 2; y0 = mid - minSpan / 2; y1 = mid + minSpan / 2; }
+  const pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
+  const step = niceStep(y1 - y0, 4);
+  y0 = Math.floor(y0 / step) * step; y1 = Math.ceil(y1 / step) * step;
+  const X = x => m.l + (x - opt.x0) / Math.max(opt.x1 - opt.x0, 1) * pw;
+  const Y = y => m.t + (1 - (y - y0) / (y1 - y0)) * ph;
+  const svg = s("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img", "aria-label": opt.label || "" }, host);
+  const css = getComputedStyle(document.documentElement);
+  const c = name => css.getPropertyValue(name).trim();
+  // 격자·눈금
+  for (let v = y0; v <= y1 + step / 2; v += step) {
+    s("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: c(Math.abs(v) < step / 1e6 && opt.zero ? "--axis" : "--grid"), "stroke-width": 1 }, svg);
+    const t = s("text", { x: m.l - 6, y: Y(v) + 3.5, "text-anchor": "end" }, svg);
+    t.textContent = opt.yFmt(v, step);
+  }
+  const span = Math.max(opt.x1 - opt.x0, 1), fit = Math.max(2, Math.floor(pw / 64));      // 눈금 글자 하나에 약 64px
+  const xs = [1800, 3600, 3 * 3600, 6 * 3600, 12 * 3600, 86400, 2 * 86400, 7 * 86400].find(v => span / v <= fit) || 7 * 86400;
+  for (let t = Math.ceil((opt.x0 + KST / 1000) / xs) * xs - KST / 1000; t <= opt.x1; t += xs) {
+    const tx = s("text", { x: X(t), y: H - 6, "text-anchor": "middle" }, svg);
+    tx.textContent = xs >= 86400 ? kst(t).slice(0, 5) : kst(t, false);
+  }
+  s("line", { x1: m.l, x2: W - m.r, y1: m.t + ph, y2: m.t + ph, stroke: c("--axis"), "stroke-width": 1 }, svg);
+  // 선
+  for (const L of opt.lines) {
+    let d = "", pen = false, prev = null;
+    for (const p of L.pts) {
+      if (p[1] == null) { pen = false; continue; }
+      if (L.step && pen && prev) d += `L${X(p[0]).toFixed(1)},${Y(prev[1]).toFixed(1)}`;
+      d += (pen ? "L" : "M") + X(p[0]).toFixed(1) + "," + Y(p[1]).toFixed(1);
+      pen = true; prev = p;
+    }
+    if (d) s("path", { d, fill: "none", stroke: L.color, "stroke-width": L.width || 2, "stroke-linejoin": "round", "stroke-linecap": "round", ...(L.dash ? { "stroke-dasharray": L.dash } : {}) }, svg);
+  }
+  // 표식 (원 = 진입, 삼각형 = 익절, ✕ = 가상손절, 큰 원 = 끝점) — 표면색 테두리 2px
+  const ring = c("--surface");
+  for (const k of opt.markers || []) {
+    const x = X(k.x), y = Y(k.y);
+    if (k.shape === "tri") s("path", { d: `M${x},${y - 6} L${x + 5.5},${y + 4} L${x - 5.5},${y + 4} Z`, fill: k.color, stroke: ring, "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    else if (k.shape === "x") { const g = s("g", { stroke: k.color, "stroke-width": 2.5, "stroke-linecap": "round" }, svg); s("line", { x1: x - 4.5, y1: y - 4.5, x2: x + 4.5, y2: y + 4.5 }, g); s("line", { x1: x - 4.5, y1: y + 4.5, x2: x + 4.5, y2: y - 4.5 }, g); }
+    else s("circle", { cx: x, cy: y, r: k.r || 4, fill: k.color, stroke: ring, "stroke-width": 2 }, svg);
+    if (k.label) {
+      const t = s("text", { x: x > W - 90 ? x - 9 : x + 9, y: y - 9, "text-anchor": x > W - 90 ? "end" : "start" }, svg);
+      t.textContent = k.label;
+      Object.assign(t.style, { fill: c("--ink"), fontWeight: 600, paintOrder: "stroke", stroke: ring, strokeWidth: "4px", strokeLinejoin: "round" });
+    }
+  }
+  // 십자선 + 툴팁
+  const cross = s("line", { y1: m.t, y2: m.t + ph, stroke: c("--axis"), "stroke-width": 1, visibility: "hidden" }, svg);
+  const tip = h("div", { class: "tip" });
+  host.append(tip);
+  const hit = s("rect", { x: m.l, y: m.t, width: pw, height: ph, fill: "transparent" }, svg);
+  const move = ev => {
+    const r = svg.getBoundingClientRect(), px = (ev.clientX - r.left) * W / r.width;
+    const xv = opt.x0 + (px - m.l) / pw * (opt.x1 - opt.x0);
+    const info = opt.tip(xv);
+    if (!info) return leave();
+    cross.setAttribute("x1", X(info.x)); cross.setAttribute("x2", X(info.x)); cross.setAttribute("visibility", "visible");
+    tip.replaceChildren(h("div", { class: "t" }, info.title));
+    for (const [sw, val, lab] of info.rows) {
+      const key = h("i"); key.style.cssText = sw;
+      tip.append(h("div", { class: "row" }, key, h("b", {}, val), h("span", {}, lab)));
+    }
+    tip.style.display = "block";
+    const left = (X(info.x) / W) * r.width;
+    tip.style.left = Math.min(Math.max(left + 12, 0), r.width - tip.offsetWidth) + "px";
+    tip.style.top = "6px";
+  };
+  const leave = () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerleave", leave);
+}
+
+const lineKey = color => `display:inline-block;width:12px;height:2px;border-radius:1px;background:${color}`;
+const dashKey = color => `display:inline-block;width:12px;height:0;border-top:2px dashed ${color}`;
+function nearest(arr, x, get = p => p[0]) {
+  let lo = 0, hi = arr.length - 1;
+  if (hi < 0) return -1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (get(arr[mid]) < x) lo = mid + 1; else hi = mid; }
+  if (lo > 0 && Math.abs(get(arr[lo - 1]) - x) < Math.abs(get(arr[lo]) - x)) lo--;
+  return lo;
+}
+
+// ── 코인 카드 ──
+function coinCard(cd, st) {
+  const css = getComputedStyle(document.documentElement), c = n => css.getPropertyValue(n).trim();
+  const card = h("article", { class: "card coin" });
+  const th = cd.threshold, gap = th == null || cd.entry == null ? null : cd.entry - th;
+  const stateTxt = th == null ? "진입 경계 계산 중"
+    : gap <= 0 ? "진입 구간 — 김프가 경계 아래" : `진입 대기 — 경계보다 ${pp(gap)} 높음`;
+  const dot = h("span", { class: "dot " + (th != null && gap <= 0 ? "good" : "") });
+  card.append(h("div", { class: "coin-head" }, h("h2", {}, cd.coin), h("span", { class: "state" }, dot, stateTxt)));
+
+  const nums = h("dl", { class: "nums" });
+  const add = (label, value, title) => nums.append(h("div", title ? { title } : {}, h("dt", {}, label), h("dd", {}, value)));
+  add("진입 김프", cd.entry == null ? "—" : pct(cd.entry), "지금 진입하면 치르는 김프 (업비트 매도호가 ÷ 비트겟 매수호가 × 은행 환율)");
+  add("청산 김프", cd.exit == null ? "—" : pct(cd.exit), "지금 청산하면 받는 김프 (지금 환율)");
+  add("진입 경계", th == null ? "—" : pct(th), "최근 24시간 진입 김프의 하위 20%");
+  add("슬롯", `${cd.slots.length} / ${cd.n_slots}`);
+  card.append(nums);
+
+  // 24시간 김프 차트
+  const chart = h("div", { class: "chart" });
+  card.append(chart);
+  const key = h("div", { class: "key" });
+  const k = (style, text) => { const i = h("i"); i.style.cssText = style; key.append(h("span", {}, i, text)); };
+  k(lineKey(c("--s1")), "진입 김프");
+  k(dashKey(c("--muted")), "진입 경계 (24h 하위 20%)");
+  k(`width:8px;height:8px;border-radius:50%;background:${c("--s1")}`, "진입");
+  k(`width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:9px solid ${c("--good")}`, "익절");
+  k(`width:9px;height:9px;background:linear-gradient(45deg,transparent 40%,${c("--bad")} 40% 60%,transparent 60%),linear-gradient(-45deg,transparent 40%,${c("--bad")} 40% 60%,transparent 60%)`, "가상손절");
+  card.append(key);
+  const ser = cd.series || [];
+  card._draw = () => lineChart(chart, {
+    x0: st.now - 24 * 3600, x1: st.now, height: 190, minSpan: 0.4,
+    label: `${cd.coin} 최근 24시간 진입 김프와 진입 경계`,
+    lines: [
+      { pts: ser.map(p => [p[0], p[2]]), color: c("--muted"), width: 1.5, dash: "4 3" },
+      { pts: ser.map(p => [p[0], p[1]]), color: c("--s1"), width: 2 },
+    ],
+    markers: [
+      ...cd.events.map(e => ({ x: e[0], y: e[1], shape: "dot", color: c("--s1") })),
+      ...cd.exits.map(e => ({ x: e[0], y: e[1], shape: e[2] === "가상손절" ? "x" : "tri", color: e[2] === "가상손절" ? c("--bad") : c("--good") })),
+    ],
+    yFmt: (v, step) => (v > 0 ? "+" : "") + v.toFixed(step < 0.1 ? 2 : 1) + "%",
+    tip: x => {
+      const i = nearest(ser, x);
+      if (i < 0) return null;
+      const p = ser[i];
+      const rows = [[lineKey(c("--s1")), pct(p[1]), "진입 김프"]];
+      if (p[2] != null) rows.push([dashKey(c("--muted")), pct(p[2]), "진입 경계"]);
+      if (p[3] != null) rows.push(["display:inline-block;width:12px", num(p[3], 1), "은행 환율"]);
+      for (const e of cd.events) if (Math.abs(e[0] - p[0]) <= 60) rows.push([`width:8px;height:8px;border-radius:50%;background:${c("--s1")}`, pct(e[1]), "진입"]);
+      for (const e of cd.exits) if (Math.abs(e[0] - p[0]) <= 60) rows.push([`width:8px;height:8px;background:${e[2] === "가상손절" ? c("--bad") : c("--good")}`, won(e[3]), e[2] || "청산"]);
+      return { x: p[0], title: kst(p[0]), rows };
+    },
+  });
+
+  // 열린 슬롯 표
+  if (cd.slots.length) {
+    const tb = h("tbody");
+    for (const sl of cd.slots) {
+      const toTp = sl.now_k == null ? null : sl.target - sl.now_k;
+      const meter = h("span", { class: "meter" + (sl.move >= sl.stop_at * 0.75 ? " bad" : sl.move >= sl.stop_at * 0.5 ? " warn" : "") });
+      const fill = h("i"); fill.style.width = Math.max(0, Math.min(100, (sl.move || 0) / sl.stop_at * 100)) + "%"; meter.append(fill);
+      const hold = sl.hold_h < 48 ? sl.hold_h.toFixed(1) + "시간" : (sl.hold_h / 24).toFixed(1) + "일";
+      const sub = text => h("div", { class: "sub2" }, text);
+      tb.append(h("tr", {},
+        h("td", {}, kst(sl.t), sub(hold + " 보유")),
+        h("td", { title: "진입 김프 → 진입 때 환율로 잰 지금 청산김프 (봇이 익절을 판단하는 값)" },
+          sl.now_k == null ? pct(sl.k0) : `${pct(sl.k0)} → ${pct(sl.now_k)}`,
+          sub(`목표 ${pct(sl.target)}` + (toTp == null ? "" : toTp <= 0 ? " · 도달" : ` · 남은 ${pp(toTp)}`))),
+        h("td", { class: "r " + signCls(sl.net || 0) }, sl.net == null ? "—" : won(sl.net), sub(sl.approx || "")),
+        h("td", { class: "r", title: `비트겟 가격이 진입 때보다 ${sl.stop_at.toFixed(0)}% 오르면 가상손절` },
+          sl.move == null ? "—" : pct(sl.move, 1), h("div", { class: "sub2" }, meter, `/ +${sl.stop_at.toFixed(0)}%`)),
+      ));
+    }
+    const table = h("table", { class: "slots" }, h("thead", {}, h("tr", {},
+      h("th", {}, "진입"), h("th", {}, "김프 진입 → 지금"), h("th", { class: "r" }, "평가손익"),
+      h("th", { class: "r", title: "비트겟 가격이 진입 때보다 오른 정도 — 가상손절 기준까지" }, "가격 변화"))), tb);
+    card.append(h("div", { class: "tbl-wrap" }, table));
+  } else {
+    card.append(h("div", { class: "empty" }, "열린 슬롯 없음"));
+  }
+  const foot = h("div", { class: "coin-foot" });
+  const span = (label, v) => { const e = h("span", {}, label + " "); e.append(h("b", { class: signCls(v) }, won(v))); return e; };
+  foot.append(span(`실현 (${cd.n_closed}건)`, cd.realized), span("평가", cd.unreal));
+  if (cd.bot) foot.append(h("span", { title: "모의매매 로그 마지막 줄" }, `봇이 본 김프 ${pct(cd.bot.entry)} / ${pct(cd.bot.exit)} · 활성 ${cd.bot.active}/${cd.bot.slots}`));
+  card.append(foot);
+  return card;
+}
+
+function drawEquity(st) {
+  const css = getComputedStyle(document.documentElement), c = n => css.getPropertyValue(n).trim();
+  const eq = st.equity.concat([[st.now, st.realized]]);
+  lineChart(document.getElementById("equity"), {
+    x0: st.start, x1: st.now, height: 220, zero: true, minSpan: 4000, label: "모의매매 시작 이후 누적 손익",
+    lines: [{ pts: eq, color: c("--s1"), width: 2, step: true }],
+    markers: [{ x: st.now, y: st.total, shape: "dot", r: 5, color: c("--s1"), label: won(st.total) }],
+    yFmt: v => (v > 0 ? "+" : v < 0 ? "−" : "") + (Math.abs(v) >= 10000 ? (Math.abs(v) / 10000).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) + "만" : Math.abs(v).toLocaleString("ko-KR")),
+    tip: x => {
+      let i = nearest(eq, x);
+      if (i < 0) return null;
+      if (eq[i][0] > x && i > 0) i--;
+      const rows = [[lineKey(c("--s1")), won(eq[i][1]), "누적 실현"]];
+      if (i === eq.length - 1) rows.push([`width:8px;height:8px;border-radius:50%;background:${c("--s1")}`, won(st.total), "지금 (평가 포함)"]);
+      return { x: eq[i][0], title: kst(eq[i][0]), rows };
+    },
+  });
+}
+
+// ── 전체 그리기 ──
+function chip(id, dotCls, text) {
+  const e = document.getElementById(id);
+  e.replaceChildren(h("span", { class: "dot " + dotCls }), text);
+}
+function render() {
+  const st = state;
+  if (!st || st.loading) return;
+  const nowLocal = Date.now() / 1000;
+  const S = st.strategy;
+  document.getElementById("strategy").textContent =
+    `${S.coins.join(" · ")}  |  익절 판단 ${S.tp === "entry" ? "진입 환율 고정" : "지금 환율"}  |  진입 ${S.window}h 하위 ${Math.round((S.entry_q || 0) * 100)}%  |  ` +
+    `시간손절 ${S.time_stop ? S.time_stop + "h" : "없음 (가상손절 +" + S.stop_move.toFixed(0) + "%만)"}  |  익절폭 ${S.spacing}%  |  레버리지 ${S.leverage}배`;
+  document.getElementById("period").textContent =
+    `시작 ${kst(st.start)} KST · 경과 ${dur(st.now - st.start)} · 2주 판정 ${kst(st.judge)} 까지 ${dur(st.judge - st.now)}`;
+
+  const bot = st.svc.kimp, ql = st.svc["kimp-quotes"];
+  const botAge = st.bot_t ? st.now - st.bot_t : null;
+  chip("chip-bot", bot === "active" ? (botAge != null && botAge > 90 ? "warn" : "good") : "bad",
+       bot === "active" ? (botAge != null && botAge > 90 ? `모의매매 로그 ${ago(botAge)} 멈춤` : "모의매매 가동 중") : `모의매매 ${bot || "?"}`);
+  const qAge = st.quote_t ? st.now - st.quote_t : null;
+  chip("chip-log", ql === "active" ? (qAge != null && qAge > 90 ? "warn" : "good") : "bad",
+       ql === "active" ? (qAge != null && qAge > 90 ? `호가 ${ago(qAge)} 멈춤` : "호가 로거 가동 중") : `호가 로거 ${ql || "?"}`);
+  const okAge = st.last_ok ? nowLocal - st.last_ok : null;
+  chip("chip-sync", st.error ? "bad" : okAge != null && okAge > 45 ? "warn" : "good",
+       st.error ? `연결 끊김 · 마지막 성공 ${okAge == null ? "없음" : ago(okAge)}` : `갱신 ${okAge == null ? "—" : ago(okAge)}`);
+
+  const alert = document.getElementById("alert");
+  const msgs = [];
+  if (st.error) msgs.push("서버 연결 오류: " + st.error);
+  if (st.cap_mismatch) msgs.push("서버의 슬롯 자본이 이 맥의 paper_settings.py 와 다릅니다 — 진입 로그 값으로 근사 중. 로컬 설정을 서버와 맞추세요.");
+  for (const l of st.vstops || []) msgs.push("가상손절: " + l);
+  for (const l of st.errors || []) msgs.push("모의매매 오류 로그: " + l);
+  if (msgs.length) { alert.replaceChildren(h("span", { class: "dot " + (st.error || st.errors.length ? "bad" : "warn") }), h("div", {}, ...msgs.flatMap((m, i) => i ? [h("br"), m] : [m]))); alert.style.display = "flex"; }
+  else alert.style.display = "none";
+
+  setText("k-total", won(st.total), signCls(st.total));
+  setText("k-total-d", `자본 ${num(st.capital / 10000)}만원 대비 ${pct(st.total / st.capital * 100)} · 실현 ${won(st.realized)} · 평가 ${won(st.unreal)}`);
+  const br = st.by_reason || {}, tp = br["익절"] || [0, 0], vs = br["가상손절"] || [0, 0];
+  setText("k-closed", `${st.n_closed}건`);
+  setText("k-closed-d", `익절 ${tp[0]} · 가상손절 ${vs[0]}` + (st.n_closed ? ` · 건당 ${won(st.realized / st.n_closed)}` : ""));
+  setText("k-open", `${st.n_open} / ${Object.values(st.coins).reduce((a, c) => a + c.n_slots, 0)}`);
+  setText("k-open-d", `투입 ${num(st.open_krw / 10000)}만원 (최대 ${num(st.full / 10000)}만원의 ${Math.round(st.open_krw / st.full * 100)}%)`);
+  setText("k-fx", st.fx == null ? "—" : num(st.fx, 1));
+  setText("k-fx-d", (st.fx_start ? `시작 ${num(st.fx_start, 1)} 대비 ${pct((st.fx / st.fx_start - 1) * 100)} · ` : "") + `업비트 USDT ${num(st.usdt)}`);
+
+  const box = document.getElementById("coins");
+  const cards = Object.values(st.coins).map(cd => coinCard(cd, st));
+  box.replaceChildren(...cards);
+  cards.forEach(cd => cd._draw());
+  drawEquity(st);
+
+  const tb = document.getElementById("recent");
+  tb.replaceChildren(...st.recent.map(r => h("tr", {},
+    h("td", {}, kst(r.exit_t)), h("td", {}, r.coin), h("td", {}, r.reason),
+    h("td", { class: "r" }, r.hold_h < 48 ? r.hold_h.toFixed(1) + "h" : (r.hold_h / 24).toFixed(1) + "일"),
+    h("td", { class: "r" }, pct(r.k0)), h("td", { class: "r " + signCls(r.net) }, won(r.net)))));
+  document.getElementById("recent-empty").style.display = st.recent.length ? "none" : "block";
+  lastRender = nowLocal;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/api/state", { cache: "no-store" });
+    state = await r.json();
+    document.getElementById("app").classList.remove("stale");
+    render();
+  } catch (e) {
+    document.getElementById("app").classList.add("stale");      // 로컬 서버가 꺼짐: 마지막 화면을 흐리게 유지
+    chip("chip-sync", "bad", "대시보드 서버 꺼짐 — python tools/live_dashboard.py");
+  }
+}
+let rt;
+window.addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(render, 150); });
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>
