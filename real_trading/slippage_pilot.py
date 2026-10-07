@@ -20,6 +20,10 @@
       - 업비트만 체결되고 비트겟 실패 시 → 업비트 즉시 되팔아 언헤지 해소 후 중단
       - 라이브 실행은 --live 플래그 + 콘솔 확인 입력 필요
 
+⚠ 2026-10-07: 업비트 + 비트겟 v2 전용 옛 도구다. 비트겟 통합계정(UTA) 키로는 동작하지 않고,
+  hedge 모드에서는 숏 청산 주문 방향이 틀린다 (real_client.py 참고). 빗썸 실거래의 1왕복 시험은
+  python -m real_trading.live_trader --live --roundtrip XRP 를 쓴다.
+
 실행:
       python -m real_trading.slippage_pilot           # 드라이런(안전)
       python -m real_trading.slippage_pilot --live     # 실주문

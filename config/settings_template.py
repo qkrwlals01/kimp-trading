@@ -5,6 +5,10 @@ BITGET_ACCESS_KEY = "YOUR_BITGET_ACCESS_KEY"
 BITGET_SECRET_KEY = "YOUR_BITGET_SECRET_KEY"
 BITGET_PASSPHRASE = "YOUR_BITGET_PASSPHRASE"
 
+# 빗썸 API 2.0 (실거래 실행기 real_trading/live_trader.py) — 권한: 자산조회·주문조회·주문하기만, 출금 권한은 주지 말 것
+BITHUMB_ACCESS_KEY = ""
+BITHUMB_SECRET_KEY = ""
+
 # 기존 단일 코인 설정 (하위 호환)
 SYMBOL              = "BTC"
 UPBIT_MARKET        = "KRW-BTC"

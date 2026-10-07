@@ -7,6 +7,12 @@
   - 이 실측값으로 슬리피지(티커가격 대비 실제 체결가 차이)를 계산할 수 있다.
 
 주의: 이 모듈은 진짜 주문을 낸다. config/settings.py 에 실제 API 키가 있어야 한다.
+
+⚠ 2026-10-07 확인: 이 비트겟 코드는 v2(기존 계정) 전용이다.
+  - 비트겟은 2026-09-15 부터 기존 계정을 통합계정(UTA)으로 전환 중이고, UTA 키로는 v2 주문 API 를 못 쓴다.
+  - close_short 의 side="buy"+tradeSide="close" 는 hedge 모드에서는 '롱 청산'이다 (v2 문서: 숏 청산은
+    side="sell"+tradeSide="close"). one-way 모드에서는 tradeSide 가 무시돼 동작하지만 reduceOnly 가 없다.
+  새 실거래는 real_trading/exchanges.py + live_trader.py 를 쓴다 (v3/v2, one-way/hedge 를 자동 판별).
 """
 
 import time, hmac, hashlib, base64, json, uuid, requests
