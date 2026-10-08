@@ -1,4 +1,3 @@
+# 모의매매·호가 로거·실거래 실행기·판정 리포트·대시보드
 requests
 PyJWT
-flask
-matplotlib

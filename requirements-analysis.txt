@@ -1,8 +1,7 @@
-# 분석·시뮬레이션 도구 전용 (서버 봇 실행에는 불필요)
+# 분석 스크립트(data/)와 시험(tests/) 전용 — 서버 봇 실행에는 불필요
 -r requirements.txt
 pandas
-scipy
+numpy
 statsmodels
 yfinance
-beautifulsoup4
-lxml
+pytest
