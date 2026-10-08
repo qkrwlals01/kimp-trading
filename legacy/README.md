@@ -17,3 +17,5 @@
 `real_client.py` 의 비트겟 숏 청산 주문은 hedge 모드에서 방향이 틀리고(롱 청산), 통합계정(UTA) 키로는 동작하지 않는다.
 
 초기 코드가 쓰던 flask·matplotlib 은 지금 requirements 에 없다.
+`core/coin_client.py`, `core/multi_grid_trader.py`, `real_trading/real_client.py` 가 읽던 옛 설정(업비트 키, `COINS`, `GRID_*` 등)도
+`config/settings_template.py` 에서 지웠다.
