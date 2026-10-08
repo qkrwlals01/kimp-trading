@@ -30,8 +30,18 @@ from paper_trading.paper_settings import (                       # 서버와 같
     PAPER_FEE_ROUND as FEE_RATE, PAPER_FEE_KR, PAPER_FEE_BG, PAPER_BG_REBATE,
 )
 
-HOST = "<USER>@<SERVER>"
-KEY = os.path.expanduser("~/.ssh/<KEY_FILE>")
+def _server() -> tuple:
+    """서버 접속 정보는 git 에 올리지 않는 config/settings.py 에서 읽는다 (SERVER_HOST, SERVER_KEY_PATH)."""
+    try:
+        from config import settings as s
+    except ImportError:
+        s = None
+    host = getattr(s, "SERVER_HOST", "") if s else ""
+    key = os.path.expanduser(getattr(s, "SERVER_KEY_PATH", "") if s else "")
+    return host, key
+
+
+HOST, KEY = _server()
 HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "live_dashboard.html")
 KST = timezone(timedelta(hours=9))
 HIST_S = 26 * 3600                # 처음 받아 올 호가 기간 (24시간 진입 경계 + 차트 여유)

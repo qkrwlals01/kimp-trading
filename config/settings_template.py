@@ -5,6 +5,10 @@ BITGET_ACCESS_KEY = "YOUR_BITGET_ACCESS_KEY"
 BITGET_SECRET_KEY = "YOUR_BITGET_SECRET_KEY"
 BITGET_PASSPHRASE = "YOUR_BITGET_PASSPHRASE"
 
+# 운영 서버 접속 (tools/weekly_report.py, tools/live_dashboard.py 가 SSH 로 기록을 읽을 때)
+SERVER_HOST = ""        # 예: "user@서버주소"
+SERVER_KEY_PATH = ""    # 예: "~/.ssh/서버키파일"
+
 # 빗썸 API 2.0 (실거래 실행기 real_trading/live_trader.py) — 권한: 자산조회·주문조회·주문하기만, 출금 권한은 주지 말 것
 BITHUMB_ACCESS_KEY = ""
 BITHUMB_SECRET_KEY = ""

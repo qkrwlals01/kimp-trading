@@ -46,8 +46,18 @@ from paper_trading import variants as va
 from paper_trading.paper_settings import PAPER_TOTAL_KRW, PAPER_BITGET_KRW
 from real_trading import coin_selector as cs
 
-HOST = "<USER>@<SERVER>"
-KEY = os.path.expanduser("~/.ssh/<KEY_FILE>")
+def _server() -> tuple:
+    """서버 접속 정보는 git 에 올리지 않는 config/settings.py 에서 읽는다 (SERVER_HOST, SERVER_KEY_PATH)."""
+    try:
+        from config import settings as s
+    except ImportError:
+        s = None
+    host = getattr(s, "SERVER_HOST", "") if s else ""
+    key = os.path.expanduser(getattr(s, "SERVER_KEY_PATH", "") if s else "")
+    return host, key
+
+
+HOST, KEY = _server()
 REMOTE = "~/kimp_trading"
 REPORTS = os.path.join(ROOT, "reports")
 DATA = os.path.join(REPORTS, "data")
