@@ -230,7 +230,7 @@ BTC 8.6년 시간봉(바이낸스·yfinance 환율·체결가 기준). 2017-21 /
 - 한계: BTC 1종, 여러 파라미터 동시 시험, 가격·거래량 파라미터끼리 겹침 → 호가 로그로 재검증 필요
 - 호가 로거 `real_trading/quote_logger.py` — 서버에서 2026-09-26 06:53 UTC 부터 상시 수집 (`kimp-quotes`)
 - 코인 선정기 `real_trading/coin_selector.py` — 호가 로그로 탈락 조건·기대수익 판정
-- 분석 도구 (data/, real_trading/spread_screener.py) — 커밋 73cd2a6 참고
+- 분석 도구 (data/, real_trading/spread_screener.py) — 커밋 4f5d5f2 참고
 
 ### 그 외 확인 사항 (2026-08 ~ 09 분석)
 - 시장가 + 범위제한 없음 + 24h 시간손절 = 구조적 적자
