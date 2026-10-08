@@ -23,8 +23,11 @@ __pycache__/
 .DS_Store
 .claude/
 
-# 외부 블로그 수집물 (타인 콘텐츠 — 저장소에 올리지 않음)
+# 외부 수집 자료 (저장소에 올리지 않음)
 tools/blog_data/
+
+# 로컬 다이어그램 작업물
+docs/architecture*
 
 # 판정 리포트 결과와 받아 온 데이터
 reports/

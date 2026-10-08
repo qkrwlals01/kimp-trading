@@ -20,7 +20,7 @@
 - VCN/서브넷 수동 생성 후 공인 IP 할당
 - SSH 키 권한 오류 수정 (`icacls` 명령으로 Windows 권한 설정)
 - systemd 서비스 등록 (`/etc/systemd/system/kimp.service`)
-- venv 위치 문제 해결: scp 업로드 시 Windows venv 덮어쓰기 → `~/kimp_venv` 분리
+- venv 위치 문제 해결: 서버 업로드 시 Windows venv 덮어쓰기 → 가상환경을 프로젝트 밖으로 분리
 
 ---
 
@@ -463,18 +463,4 @@ PaperCoinGrid 를 상속해 규칙만 바꾼다. 서버 코드는 그대로. 값
 
 ---
 
-## 서버 운영 정보
-- 주소: oracle cloud (<USER>@<SERVER>, <SERVER>), 키 `~/.ssh/<KEY_FILE>`
-- 모의매매: `sudo systemctl [start|stop|status] kimp` — 2026-10-06 09:52 UTC 부터 9차 전략(XRP·SUI·LINK, 수수료 왕복 0.14%)으로 가동 중
-- 호가 로거: `sudo systemctl [start|stop|status] kimp-quotes` — 상시 가동
-- 실시간 로그: `sudo journalctl -u kimp -f` / `sudo journalctl -u kimp-quotes -f`
-- venv: `~/kimp_venv` (프로젝트 외부, Python 3.10)
-- 로그 파일
-  - `paper_trading/logs/trades_book.csv`: 9차 전략 거래 기록 (2026-10-06 이후, `reason`·`exit_fx` 열 포함)
-  - `paper_trading/logs/trades_book_20260927_v1.csv`: 호가 기준 옛 전략 기록 (09-27 ~ 10-06)
-  - `paper_trading/logs/trades.csv`: 체결가 기준 옛 기록 (~07-29, 보존)
-  - `paper_trading/logs/trading.log`: 실시간 로그
-  - `real_trading/logs/quotes/`: 호가 로그 (일별, 지난 날짜 gzip)
-- 호가 로거 점검: `~/kimp_venv/bin/python -m real_trading.quote_logger --status`
-- 코인 판정: `~/kimp_venv/bin/python -m real_trading.coin_selector`
-- CSV 다운로드: `scp -i ~/.ssh/<KEY_FILE> <USER>@<SERVER>:~/kimp_trading/paper_trading/logs/trades_book.csv .`
+서버 운영 방법(서비스, 로그 파일, 점검 명령)은 [docs/operations.md](docs/operations.md) 참고.
