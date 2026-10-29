@@ -11,6 +11,10 @@
 모의매매와 같은 식으로 계산한다 (tools/weekly_report.py 의 미청산 평가와 같은 방법).
   업비트 진입가 = 슬롯자본 ÷ 수량,  비트겟 진입가 = 업비트 진입가 ÷ ((1 + 진입김프) × 진입 때 환율)
 펀딩은 호가 로그의 펀딩비를 보유 시간만큼 누적한 추정치다.
+환율분 = 슬롯 금액 × (청산 때 또는 지금 은행 환율 ÷ 진입 때 은행 환율 − 1). 헤지 포지션은 열어 둔 금액만큼
+원/달러에 노출되므로, 화면은 손익에서 이 몫을 뺀 '환율 제외' 값을 기본으로 보여 준다 (단추로 포함 값과 바꿔 본다).
+환율은 판정 리포트와 같이 직전 5분 중앙값을 쓴다 (피드 튐 제거, tools/weekly_report.py 의 exposure 와 같은 기준).
+받아 둔 호가(26시간)보다 오래된 시각의 환율은 서버 호가 기록에서 한 번 찾아 와 기억한다.
 진입 경계는 호가 로그로 다시 계산한 24시간 하위 20% 라서 봇 내부 값과 조금 다를 수 있다.
 
 실행:
@@ -143,7 +147,7 @@ q.sort(key=lambda r: r[0])
 out["quotes"] = q
 
 # 받아 둔 호가보다 오래된 미청산 슬롯: 진입 때 환율을 그날 파일에서 찾는다
-fx = {}
+fx, fxm = {}, {}
 need = {}
 for t in a.get("fx_req", []):
     need.setdefault(datetime.fromtimestamp(t, timezone.utc).strftime("%Y%m%d"), []).append(t)
@@ -170,7 +174,10 @@ for day, req in need.items():
         k = bisect.bisect_right(tt, t) - 1
         if k >= 0:
             fx[str(t)] = ff[k]
+            w = sorted(ff[max(0, k - 30):k + 1])          # 직전 5분(31개) 중앙값 — 환율분 계산용
+            fxm[str(t)] = w[len(w) // 2]
 out["fx"] = fx
+out["fxm"] = fxm
 sys.stdout.write(base64.b64encode(zlib.compress(json.dumps(out).encode(), 6)).decode())
 '''
 
@@ -201,6 +208,7 @@ class Store:
         self.quotes = {c: deque() for c in coins}   # [t, up_bid, up_ask, bg_bid, bg_ask, funding, fx, usdt]
         self.last_ts = 0.0
         self.fx_cache = {}              # 진입 시각 → 그때 환율
+        self.fxm_cache = {}             # 시각 → 직전 5분 중앙값 환율 (환율분 계산용)
         self.svc = {}
         self.server_now = None
         self.last_ok = None
@@ -245,6 +253,7 @@ def absorb(store: Store, p: dict):
         while dq and dq[0][0] < cutoff:
             dq.popleft()
     store.fx_cache.update({float(k): v for k, v in p["fx"].items()})
+    store.fxm_cache.update({float(k): v for k, v in p.get("fxm", {}).items()})
     store.svc, store.server_now = p["svc"], p["now"]
 
 
@@ -284,6 +293,28 @@ def _open_slots(ents: list, closed: list, start: float) -> list:
     return [ents[i] for i in range(len(ents)) if not used[i]]
 
 
+def _fx_part(krw: float, fx0, fx1) -> float:
+    """환율분: 금액 × 은행 환율 변화율 (환율을 모르면 0)"""
+    return krw * (fx1 / fx0 - 1) if fx0 and fx1 else 0.0
+
+
+def _fx_med(rows: list, t: float):
+    """t 직전 5분(31개) 은행 환율 중앙값. 받아 둔 호가가 그 구간을 덮지 못하면 None"""
+    if not rows or rows[0][0] > t - 300:
+        return None
+    k = bisect.bisect_right([r[0] for r in rows], t)
+    w = sorted(r[6] for r in rows[max(0, k - 31):k] if r[6])
+    return w[len(w) // 2] if w else None
+
+
+def _closed_fx(r: dict) -> float:
+    """청산된 거래의 환율분을 거래 기록만으로 근사 (봇이 본 환율 entry_usd_krw → exit_fx). 5분 중앙값을 받기 전에 쓴다"""
+    try:
+        return _fx_part(float(r["capital_per_slot"]), float(r["entry_usd_krw"]), float(r.get("exit_fx") or 0))
+    except (KeyError, ValueError):
+        return 0.0
+
+
 def _at(rows, t):
     """t 이전 가장 가까운 호가 행 (없으면 None)"""
     k = bisect.bisect_right([r[0] for r in rows], t) - 1
@@ -314,6 +345,26 @@ def compute(store: Store) -> dict:
 
     coins, open_rows, fx_req = {}, [], []
     unreal_total = 0.0
+
+    fx_rows = next((list(dq) for dq in store.quotes.values() if dq), [])     # 환율은 코인과 무관 — 아무 코인 기록이나
+    fx_now = _fx_med(fx_rows, now + 60) if fx_rows else None
+
+    def fxm(t: float):
+        """t 때 5분 중앙값 환율. 받아 둔 호가에 없으면 서버에 요청해 두고 None"""
+        v = _fx_med(fx_rows, t)
+        if v is None:
+            v = store.fxm_cache.get(t)
+            if v is None:
+                fx_req.append(t)
+        return v
+
+    def closed_fx(r: dict) -> float:
+        a = fxm(datetime.fromisoformat(r["entry_dt"]).timestamp())
+        b = fxm(datetime.fromisoformat(r["exit_dt"]).timestamp())
+        return _fx_part(float(r["capital_per_slot"]), a, b) if a and b else _closed_fx(r)
+
+    for r in closed:
+        r["_fxp"] = closed_fx(r)
     for c, cfg in PAPER_COINS.items():
         rows = list(store.quotes[c])
         cpg = cfg["upbit_capital"] / cfg["n_slots"]
@@ -354,6 +405,7 @@ def compute(store: Store) -> dict:
                            else "수량 기록 없음" if qty is None else ""}
             if rows and qty:
                 cpg_s = cap_log if mismatch else cpg
+                fxp = _fx_part(cpg_s, fxm(te) or f0, fx_now)      # 5분 중앙값 기준. 아직 못 받았으면 진입 때 환율로
                 f0 = f0 or card["fx"]                 # 환율을 아직 못 찾았으면 지금 환율로 근사 (approx 표시)
                 ub1, ba1 = rows[-1][1], rows[-1][4]
                 up0 = cpg_s / qty
@@ -372,7 +424,7 @@ def compute(store: Store) -> dict:
                     fund_rate_t += (rows[0][5] or 0) * (rows[0][0] - te) / (8 * 3600)
                 fund = cpg_s * fund_rate_t
                 net = gross - FEE_RATE * cpg_s + fund
-                s.update(net=net, fund=fund,
+                s.update(net=net, fund=fund, fxp=fxp,
                          now_k=_kimp(ub1, ba1, f0),                # 진입 환율로 잰 지금 청산김프 (익절 판단 값)
                          move=(ba1 / bg0 - 1) * 100,               # 비트겟 가격 변화 (가상손절 기준)
                          stop_at=stop_move * 100)
@@ -384,6 +436,8 @@ def compute(store: Store) -> dict:
         card["realized"] = sum(float(r["net_pnl"]) for r in coin_closed)
         card["n_closed"] = len(coin_closed)
         card["unreal"] = sum(s.get("net", 0.0) for s in slots)
+        card["realized_fx"] = sum(r["_fxp"] for r in coin_closed)
+        card["unreal_fx"] = sum(s.get("fxp", 0.0) for s in slots)
         card["events"] = [[round(e[0]), e[2]] for e in ents if e[1] == c and e[0] >= now - 24 * 3600]
         card["exits"] = [[round(datetime.fromisoformat(r["exit_dt"]).timestamp()), float(r["exit_premium"]),
                           r.get("reason") or "", float(r["net_pnl"])] for r in coin_closed
@@ -399,15 +453,18 @@ def compute(store: Store) -> dict:
         k = r.get("reason") or "?"
         by_reason[k][0] += 1
         by_reason[k][1] += float(r["net_pnl"])
-    equity, acc = [[round(start), 0.0]], 0.0
+    equity, acc, acc_fx = [[round(start), 0.0, 0.0]], 0.0, 0.0        # [시각, 누적 실현, 그중 환율분]
     for r in sorted(closed, key=lambda r: r["exit_dt"]):
         acc += float(r["net_pnl"])
-        equity.append([round(datetime.fromisoformat(r["exit_dt"]).timestamp()), round(acc)])
+        acc_fx += r["_fxp"]
+        equity.append([round(datetime.fromisoformat(r["exit_dt"]).timestamp()), round(acc), round(acc_fx)])
     recent = []
     for r in sorted(closed, key=lambda r: r["exit_dt"], reverse=True)[:15]:
         recent.append({"exit_t": datetime.fromisoformat(r["exit_dt"]).timestamp(), "coin": r["coin"],
                        "reason": r.get("reason") or "", "hold_h": float(r["hold_hours"]),
-                       "k0": float(r["entry_premium"]), "net": float(r["net_pnl"])})
+                       "k0": float(r["entry_premium"]), "net": float(r["net_pnl"]), "fxp": r["_fxp"]})
+    realized_fx = sum(cd["realized_fx"] for cd in coins.values())
+    unreal_fx = sum(cd["unreal_fx"] for cd in coins.values())
     n_open = sum(len(cd["slots"]) for cd in coins.values())
     open_krw = sum(len(cd["slots"]) * cd["cpg"] for cd in coins.values())
     full = sum(cd["cpg"] * cd["n_slots"] for cd in coins.values())
@@ -431,6 +488,7 @@ def compute(store: Store) -> dict:
                      "stop_move": stop_move * 100, "fee_kr": PAPER_FEE_KR * 100, "fee_bg": PAPER_FEE_BG * 100,
                      "bg_rebate": PAPER_BG_REBATE * 100},
         "capital": PAPER_TOTAL_KRW, "realized": realized, "unreal": unreal_total, "total": realized + unreal_total,
+        "realized_fx": realized_fx, "unreal_fx": unreal_fx, "total_fx": realized_fx + unreal_fx,
         "n_closed": len(closed), "by_reason": dict(by_reason), "n_open": n_open, "open_krw": open_krw, "full": full,
         "fx": some.get("fx"), "usdt": some.get("usdt"), "fx_start": first_fx,
         "coins": coins, "equity": equity, "recent": recent, "errors": errors[-3:], "vstops": vstops[-3:],
@@ -446,7 +504,8 @@ def poller(store: Store, host: str, key: str, interval: float):
         t0 = time.time()
         try:
             with store.lock:
-                fx_req = [t for t in json.loads(store.state).get("fx_pending", []) if t not in store.fx_cache]
+                fx_req = [t for t in json.loads(store.state).get("fx_pending", [])
+                          if t not in store.fx_cache or t not in store.fxm_cache]
             p = fetch(store, host, key, first, fx_req)
             with store.lock:
                 absorb(store, p)

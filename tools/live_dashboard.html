@@ -107,13 +107,14 @@ footer { color: var(--muted); font-size: 12px; margin-top: 16px; line-height: 1.
       <span class="chip" id="chip-bot"><span class="dot"></span>모의매매</span>
       <span class="chip" id="chip-log"><span class="dot"></span>호가 로거</span>
       <span class="chip" id="chip-sync"><span class="dot"></span>연결</span>
+      <button class="theme" id="fxmode" type="button" title="손익에서 환율 변화 몫(슬롯 금액 × 은행 환율 변화율)을 빼고 볼지 고른다">손익: 환율 제외</button>
       <button class="theme" id="theme" type="button">테마: 자동</button>
     </div>
   </div>
   <div class="alert" id="alert"></div>
 
   <section class="kpis" aria-label="핵심 숫자">
-    <div class="card tile hero"><div class="label">총손익 (실현 + 미청산 평가)</div><div class="value" id="k-total">—</div><div class="detail" id="k-total-d"></div></div>
+    <div class="card tile hero"><div class="label" id="k-total-l">총손익 (실현 + 미청산 평가)</div><div class="value" id="k-total">—</div><div class="detail" id="k-total-d"></div></div>
     <div class="card tile"><div class="label">청산</div><div class="value" id="k-closed">—</div><div class="detail" id="k-closed-d"></div></div>
     <div class="card tile"><div class="label">열린 슬롯</div><div class="value" id="k-open">—</div><div class="detail" id="k-open-d"></div></div>
     <div class="card tile"><div class="label">은행 환율 (dunamu)</div><div class="value" id="k-fx">—</div><div class="detail" id="k-fx-d"></div></div>
@@ -124,14 +125,14 @@ footer { color: var(--muted); font-size: 12px; margin-top: 16px; line-height: 1.
   <section class="row2">
     <div class="card">
       <h2>누적 손익</h2>
-      <p class="sub">실현 손익의 누적과, 끝점은 지금 미청산 평가까지 더한 총손익</p>
+      <p class="sub" id="equity-sub">실현 손익의 누적과, 끝점은 지금 미청산 평가까지 더한 총손익</p>
       <div class="chart" id="equity"></div>
     </div>
     <div class="card">
       <h2>최근 청산</h2>
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>청산 시각</th><th>코인</th><th>사유</th><th class="r">보유</th><th class="r">진입 김프</th><th class="r">순손익</th></tr></thead>
+          <thead><tr><th>청산 시각</th><th>코인</th><th>사유</th><th class="r">보유</th><th class="r">진입 김프</th><th class="r" id="recent-h">순손익</th></tr></thead>
           <tbody id="recent"></tbody>
         </table>
       </div>
@@ -142,6 +143,7 @@ footer { color: var(--muted); font-size: 12px; margin-top: 16px; line-height: 1.
   <footer>
     서버에 아무것도 설치하지 않고 10초마다 SSH 로 기록을 읽기만 합니다 (tools/live_dashboard.py). 이 화면은 이 맥에서만 열립니다.<br>
     미청산 평가 = 지금 청산하면 받을 금액 (업비트 매수호가·비트겟 매도호가·업비트 USDT, 왕복 수수료, 펀딩 추정 포함). 열린 슬롯은 진입 로그와 청산 기록을 맞춰 복원합니다.<br>
+    환율분 = 슬롯 금액 × 은행 환율 변화율 (진입 → 청산 또는 지금, 지금 환율은 최근 5분 중앙값). 헤지 포지션은 열어 둔 금액만큼 원/달러에 노출됩니다. "손익: 환율 제외"는 이 몫을 뺀 값이고, 실거래에서는 환율분도 실제 손익입니다.<br>
     수수료는 빗썸 기준입니다 (호가는 업비트). 실제 빗썸 김프·스프레드는 업비트와 다를 수 있습니다.<br>
     진입 경계는 호가 로그로 다시 계산한 최근 24시간 하위 20% 김프라서 봇 내부 값과 조금 다를 수 있습니다. "지금 청산김프"는 진입 때 환율로 잰 값으로, 봇이 익절을 판단하는 값입니다.<br>
     김프가 몇 분 동안만 1%p 넘게 뚝 떨어진 자국은 대개 은행 환율 피드가 튄 것입니다 (예: 10/06 08:28 KST 1,342.5 → 1,358.5 → 1,342.0, 2분). 차트에 마우스를 올리면 그 시각 환율이 보입니다.
@@ -201,6 +203,17 @@ document.getElementById("theme").onclick = () => {
   applyTheme(); render();
 };
 applyTheme();
+
+// ── 손익 보기: 환율 제외(기본) / 환율 포함 ──
+// 환율분 = 슬롯 금액 × 은행 환율 변화율. 헤지 포지션은 열어 둔 금액만큼 원/달러에 노출된다
+let exFx = true;
+try { exFx = localStorage.getItem("kimp-exfx") !== "0"; } catch (e) {}
+const adj = (v, f) => v == null ? v : exFx ? v - (f || 0) : v;
+document.getElementById("fxmode").onclick = () => {
+  exFx = !exFx;
+  try { localStorage.setItem("kimp-exfx", exFx ? "1" : "0"); } catch (e) {}
+  render();
+};
 
 // ── 축 눈금 ──
 function niceStep(span, n) {
@@ -374,13 +387,14 @@ function coinCard(cd, st) {
         h("td", { title: "진입 김프 → 진입 때 환율로 잰 지금 청산김프 (봇이 익절을 판단하는 값)" },
           sl.now_k == null ? pct(sl.k0) : `${pct(sl.k0)} → ${pct(sl.now_k)}`,
           sub(`목표 ${pct(sl.target)}` + (toTp == null ? "" : toTp <= 0 ? " · 도달" : ` · 남은 ${pp(toTp)}`))),
-        h("td", { class: "r " + signCls(sl.net || 0) }, sl.net == null ? "—" : won(sl.net), sub(sl.approx || "")),
+        h("td", { class: "r " + signCls(adj(sl.net, sl.fxp) || 0), title: sl.net == null ? "" : `환율 포함 ${won(sl.net)} = 환율 제외 ${won(sl.net - (sl.fxp || 0))} + 환율분 ${won(sl.fxp || 0)}` },
+          sl.net == null ? "—" : won(adj(sl.net, sl.fxp)), sub(sl.approx || (sl.fxp == null ? "" : `환율분 ${won(sl.fxp)}`))),
         h("td", { class: "r", title: `비트겟 가격이 진입 때보다 ${sl.stop_at.toFixed(0)}% 오르면 가상손절` },
           sl.move == null ? "—" : pct(sl.move, 1), h("div", { class: "sub2" }, meter, `/ +${sl.stop_at.toFixed(0)}%`)),
       ));
     }
     const table = h("table", { class: "slots" }, h("thead", {}, h("tr", {},
-      h("th", {}, "진입"), h("th", {}, "김프 진입 → 지금"), h("th", { class: "r" }, "평가손익"),
+      h("th", {}, "진입"), h("th", {}, "김프 진입 → 지금"), h("th", { class: "r" }, exFx ? "평가 (환율 제외)" : "평가손익"),
       h("th", { class: "r", title: "비트겟 가격이 진입 때보다 오른 정도 — 가상손절 기준까지" }, "가격 변화"))), tb);
     card.append(h("div", { class: "tbl-wrap" }, table));
   } else {
@@ -388,7 +402,8 @@ function coinCard(cd, st) {
   }
   const foot = h("div", { class: "coin-foot" });
   const span = (label, v) => { const e = h("span", {}, label + " "); e.append(h("b", { class: signCls(v) }, won(v))); return e; };
-  foot.append(span(`실현 (${cd.n_closed}건)`, cd.realized), span("평가", cd.unreal));
+  foot.append(span(`실현 (${cd.n_closed}건)`, adj(cd.realized, cd.realized_fx)), span("평가", adj(cd.unreal, cd.unreal_fx)),
+              span(exFx ? "뺀 환율분" : "그중 환율분", (cd.realized_fx || 0) + (cd.unreal_fx || 0)));
   if (cd.bot) foot.append(h("span", { title: "모의매매 로그 마지막 줄" }, `봇이 본 김프 ${pct(cd.bot.entry)} / ${pct(cd.bot.exit)} · 활성 ${cd.bot.active}/${cd.bot.slots}`));
   card.append(foot);
   return card;
@@ -396,18 +411,19 @@ function coinCard(cd, st) {
 
 function drawEquity(st) {
   const css = getComputedStyle(document.documentElement), c = n => css.getPropertyValue(n).trim();
-  const eq = st.equity.concat([[st.now, st.realized]]);
+  const eq = st.equity.map(p => [p[0], adj(p[1], p[2])]).concat([[st.now, adj(st.realized, st.realized_fx)]]);
+  const total = adj(st.total, st.total_fx);
   lineChart(document.getElementById("equity"), {
     x0: st.start, x1: st.now, height: 220, zero: true, minSpan: 4000, label: "모의매매 시작 이후 누적 손익",
     lines: [{ pts: eq, color: c("--s1"), width: 2, step: true }],
-    markers: [{ x: st.now, y: st.total, shape: "dot", r: 5, color: c("--s1"), label: won(st.total) }],
+    markers: [{ x: st.now, y: total, shape: "dot", r: 5, color: c("--s1"), label: won(total) }],
     yFmt: v => (v > 0 ? "+" : v < 0 ? "−" : "") + (Math.abs(v) >= 10000 ? (Math.abs(v) / 10000).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) + "만" : Math.abs(v).toLocaleString("ko-KR")),
     tip: x => {
       let i = nearest(eq, x);
       if (i < 0) return null;
       if (eq[i][0] > x && i > 0) i--;
       const rows = [[lineKey(c("--s1")), won(eq[i][1]), "누적 실현"]];
-      if (i === eq.length - 1) rows.push([`width:8px;height:8px;border-radius:50%;background:${c("--s1")}`, won(st.total), "지금 (평가 포함)"]);
+      if (i === eq.length - 1) rows.push([`width:8px;height:8px;border-radius:50%;background:${c("--s1")}`, won(total), "지금 (평가 포함)"]);
       return { x: eq[i][0], title: kst(eq[i][0]), rows };
     },
   });
@@ -451,11 +467,17 @@ function render() {
   if (msgs.length) { alert.replaceChildren(h("span", { class: "dot " + (st.error || st.errors.length ? "bad" : "warn") }), h("div", {}, ...msgs.flatMap((m, i) => i ? [h("br"), m] : [m]))); alert.style.display = "flex"; }
   else alert.style.display = "none";
 
-  setText("k-total", won(st.total), signCls(st.total));
-  setText("k-total-d", `자본 ${num(st.capital / 10000)}만원 대비 ${pct(st.total / st.capital * 100)} · 실현 ${won(st.realized)} · 평가 ${won(st.unreal)}`);
+  const total = adj(st.total, st.total_fx), fxAll = st.total_fx || 0;
+  document.getElementById("fxmode").textContent = exFx ? "손익: 환율 제외" : "손익: 환율 포함";
+  setText("k-total-l", exFx ? "총손익 · 환율 제외 (실현 + 미청산 평가)" : "총손익 · 환율 포함 (실현 + 미청산 평가)");
+  setText("k-total", won(total), signCls(total));
+  setText("k-total-d", `자본 ${num(st.capital / 10000)}만원 대비 ${pct(total / st.capital * 100)} · 실현 ${won(adj(st.realized, st.realized_fx))} · 평가 ${won(adj(st.unreal, st.unreal_fx))} · ` +
+    (exFx ? `뺀 환율분 ${won(fxAll)} (포함하면 ${won(st.total)})` : `그중 환율분 ${won(fxAll)} (빼면 ${won(st.total - fxAll)})`));
+  setText("equity-sub", (exFx ? "환율 제외 " : "") + "실현 손익의 누적과, 끝점은 지금 미청산 평가까지 더한 총손익");
+  setText("recent-h", exFx ? "순손익 (환율 제외)" : "순손익");
   const br = st.by_reason || {}, tp = br["익절"] || [0, 0], vs = br["가상손절"] || [0, 0];
   setText("k-closed", `${st.n_closed}건`);
-  setText("k-closed-d", `익절 ${tp[0]} · 가상손절 ${vs[0]}` + (st.n_closed ? ` · 건당 ${won(st.realized / st.n_closed)}` : ""));
+  setText("k-closed-d", `익절 ${tp[0]} · 가상손절 ${vs[0]}` + (st.n_closed ? ` · 건당 ${won(adj(st.realized, st.realized_fx) / st.n_closed)}` : ""));
   setText("k-open", `${st.n_open} / ${Object.values(st.coins).reduce((a, c) => a + c.n_slots, 0)}`);
   setText("k-open-d", `투입 ${num(st.open_krw / 10000)}만원 (최대 ${num(st.full / 10000)}만원의 ${Math.round(st.open_krw / st.full * 100)}%)`);
   setText("k-fx", st.fx == null ? "—" : num(st.fx, 1));
@@ -471,7 +493,8 @@ function render() {
   tb.replaceChildren(...st.recent.map(r => h("tr", {},
     h("td", {}, kst(r.exit_t)), h("td", {}, r.coin), h("td", {}, r.reason),
     h("td", { class: "r" }, r.hold_h < 48 ? r.hold_h.toFixed(1) + "h" : (r.hold_h / 24).toFixed(1) + "일"),
-    h("td", { class: "r" }, pct(r.k0)), h("td", { class: "r " + signCls(r.net) }, won(r.net)))));
+    h("td", { class: "r" }, pct(r.k0)),
+    h("td", { class: "r " + signCls(adj(r.net, r.fxp)), title: `기록 ${won(r.net)} · 환율분 ${won(r.fxp || 0)}` }, won(adj(r.net, r.fxp))))));
   document.getElementById("recent-empty").style.display = st.recent.length ? "none" : "block";
   lastRender = nowLocal;
 }
